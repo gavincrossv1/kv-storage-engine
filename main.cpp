@@ -65,6 +65,10 @@ int main()
     // 创建监听socket
     // AF_INET: IPv4, SOCK_STREAM: 流式套接字(TCP), 0: 自动选择协议
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+    
+    //设置端口复用
+    int optval = 1;
+    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&optval, sizeof(optval));
 
     // 绑定socket到指定地址和端口
     bind(listen_fd, reinterpret_cast<sockaddr *>(&server_addr), sizeof(server_addr));
