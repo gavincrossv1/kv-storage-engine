@@ -41,6 +41,11 @@ namespace koishidb // 这个也需要加上命名空间
                      ::strerror(errno));
             return false;
         }
+        if (n == 0) 
+        {
+            // 客户端关闭连接
+            return false;
+        }
 
         LOG_INFO("[%d] received %d \n", conn_fd, n);
         // 将读取的数据追加到缓冲区

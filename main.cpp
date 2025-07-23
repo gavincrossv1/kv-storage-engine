@@ -207,9 +207,9 @@ int main()
                                 }
                             }
                             // 处理完成后关闭连接
-                            close(conn_fd);
+                            //close(conn_fd);
                             // 从连接存储中移除该连接
-                            connection_storage.erase(conn_fd);
+                            //connection_storage.erase(conn_fd);
                             return flag;
                         }
                         return false; });
