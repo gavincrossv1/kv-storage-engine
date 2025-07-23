@@ -65,10 +65,10 @@ int main()
     // 创建监听socket
     // AF_INET: IPv4, SOCK_STREAM: 流式套接字(TCP), 0: 自动选择协议
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
-    
-    //设置端口复用
+
+    // 设置端口复用
     int optval = 1;
-    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&optval, sizeof(optval));
+    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&optval, sizeof(optval));
 
     // 绑定socket到指定地址和端口
     bind(listen_fd, reinterpret_cast<sockaddr *>(&server_addr), sizeof(server_addr));
@@ -136,7 +136,7 @@ int main()
             else if (ev & EPOLLIN)
             {
                 int conn_fd = events[i].data.fd; // 连接的文件描述符
-                //LOG_INFO("[%d] trigger epoll_in event \n", conn_fd);
+                // LOG_INFO("[%d] trigger epoll_in event \n", conn_fd);
 
                 // 从连接存储中获取对应的连接对象(通过文件描述符拿到对应的connection对象)
                 auto connection = connection_storage.get(conn_fd);
@@ -177,7 +177,7 @@ int main()
                                     LOG_INFO("Received Get op, key %s", req->key_.data());
                                     LOG_INFO("%s", req->value_.data());
                                     
-                                    if (result)  // 查询成功
+                                    if (result && req->value_!=" ")  // 查询成功
                                     {
                                         LOG_INFO("success find");
                                         // 构造包含查询结果的响应
@@ -206,7 +206,6 @@ int main()
                                     break;
                                 }
                             }
-                            
                             // 处理完成后关闭连接
                             close(conn_fd);
                             // 从连接存储中移除该连接

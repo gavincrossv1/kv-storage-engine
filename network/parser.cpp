@@ -9,13 +9,14 @@
 #include <cstring>
 #include <fstream>
 #include <memory>
+#include <sstream>
 
 #include "logger.h"
 #include "helper.h"
 
 constexpr int MAX_BUF = 1024; // 最大缓冲区大小
 
-namespace koishidb//这个也需要加上命名空间
+namespace koishidb // 这个也需要加上命名空间
 {
 
     // 从连接中读取数据并解析请求
@@ -46,45 +47,62 @@ namespace koishidb//这个也需要加上命名空间
         read_storage.append(buf, n);
 
         // 解析所有读取到的数据
-        parse_all(conn, conn_fd);
+        parse_all(conn);
         return true;
     }
 
     // 解析缓冲区中的所有数据，填充请求对象
     // 参数conn: 连接对象（包含读取缓冲区和请求存储）
     // 参数conn_fd: 连接的文件描述符
-    void Parser::parse_all(std::shared_ptr<connection> conn, int conn_fd)
+    void Parser::parse_all(std::shared_ptr<connection> conn)
     {
-        std::string &read_data = conn->read; // 读取缓冲区
-        int &op_code = conn->req->op_code_;  // 操作码引用
-
-        // 解析操作码（首字符转换为整数）
-        op_code = read_data[0] - '0';
-        int ptr = 3;       // 数据起始指针（跳过操作码及分隔符）
-        bool flag = false; // 标记是否开始解析值（true表示开始解析值）
-
-        // 遍历缓冲区解析键和值
-        for (int i = ptr; i < read_data.size(); i++)
+        std::string &data = conn->read;
+        while (true)
         {
-            if (read_data[i] != '\r') // 不是换行分隔符
+            size_t end = data.find('\n');
+            if (end == std::string::npos)
+                break; // 未收到完整行
+
+            std::string line = data.substr(0, end);
+            data.erase(0, end + 1); // 移除已处理数据
+
+            std::istringstream iss(line);
+            std::string cmd, key;
+            iss >> cmd >> key;
+
+            // 跳过空行或无效命令
+            if (cmd.empty() || key.empty())
             {
-                if (flag == false)
-                {
-                    // 解析键
-                    conn->req->key_.push_back(read_data[i]);
-                }
-                else
-                {
-                    // 解析值
-                    conn->req->value_.push_back(read_data[i]);
-                }
+                continue;
+            }
+
+            conn->req = std::make_unique<request>();
+            if (cmd == "put")
+            {
+                conn->req->op_code_ = 1;
+                // put key value，value可能有空格
+                std::string value;
+                std::getline(iss, value);
+                // 去除前导空格
+                if (!value.empty() && value[0] == ' ')
+                    value.erase(0, 1);
+                conn->req->value_ = value;
+            }
+            else if (cmd == "get")
+            {
+                conn->req->op_code_ = 2;
+            }
+            else if (cmd == "delete")
+            {
+                conn->req->op_code_ = 3;
             }
             else
             {
-                // 遇到换行分隔符，跳过\r\n并标记开始解析值
-                flag = true;
-                i++;
+                conn->req->op_code_ = 0; // 未知命令
             }
+            conn->req->key_ = key;
+            // 如果只处理一条命令，直接break；如需批量处理可扩展为队列
+            break;
         }
     }
 
@@ -105,8 +123,8 @@ namespace koishidb//这个也需要加上命名空间
                     host_port, sizeof(host_port), 0);
 
         // 输出客户端信息
-        //LOG_INFO("Received Request from: %s, port: %s \n", host_name, host_port);
+        // LOG_INFO("Received Request from: %s, port: %s \n", host_name, host_port);
     }
 }; // namespace koishidb
 
-//通信功能
+// 通信功能

@@ -33,7 +33,7 @@ namespace koishidb
         // 解析缓冲区中的所有数据，填充请求对象（内部实现）
         // 参数conn: 连接对象（包含读取缓冲区和请求存储）
         // 参数conn_fd: 连接的文件描述符
-        static void parse_all(std::shared_ptr<connection> conn, int conn_fd);
+        static void parse_all(std::shared_ptr<connection> conn);
     };
 
 }; // namespace koishidb
