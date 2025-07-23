@@ -41,6 +41,7 @@ namespace koishidb
           immutable_memtable_(nullptr),
           cmp_(new InternalKeyComparator())
     {
+        LOG_INFO("DBimpl call");
         // 检查manifest文件是否存在
         if (access("./manifest", F_OK) == -1) // access检查文件是否存在或测试文件的访问权限
         {
@@ -58,6 +59,7 @@ namespace koishidb
     // 析构函数：释放资源，确保后台压缩完成，持久化manifest
     DBimpl::~DBimpl()
     {
+        LOG_INFO("[DBimpl] destructor called");
         // 获取独占锁，确保线程安全
         this->rwlock_.lock();
         // 标记数据库正在关闭
@@ -144,8 +146,14 @@ namespace koishidb
     // 持久化manifest文件，保存当前数据库元数据
     void DBimpl::DumpManifest()
     {
+        LOG_INFO("[DumpManifest] called");
         // 打开manifest文件（只写、创建模式，权限0777）
         int fd = ::open("manifest", O_WRONLY | O_CREAT, 0777);
+        if (fd < 0) {
+            LOG_ERROR("[DumpManifest] open failed: errno=%d, %s", errno, strerror(errno));
+            return;
+        }
+        LOG_INFO("[DumpManifest] open manifest fd=%d", fd);
         WritableFile file(fd, "manifest"); // 创建可写文件对象
 
         // 写入文件元信息数量和最后序列号
@@ -361,12 +369,20 @@ namespace koishidb
     // TODO：处理错误情况
     Status DBimpl::CompactMemtable()
     {
+        LOG_INFO("[CompactMemtable] called");
         // 生成新SSTable文件名
         std::string new_sstable_name = "sstable_" + std::to_string(sstable_number_);
         FileMeta *new_file_meta = new FileMeta(); // 创建新文件元信息
         this->file_metas_.push_back(new_file_meta);
 
         // 构建SSTable
+        int fd = ::open(new_sstable_name.c_str(), O_WRONLY | O_CREAT, 0777);
+        if (fd < 0) {
+            LOG_ERROR("[CompactMemtable] open sstable failed: %s, errno=%d, %s", new_sstable_name.c_str(), errno, strerror(errno));
+        } else {
+            LOG_INFO("[CompactMemtable] open sstable %s fd=%d", new_sstable_name.c_str(), fd);
+            ::close(fd); // 这里只是测试能否创建文件，实际BuildTable会重新创建
+        }
         Status s = BuildTable(new_sstable_name, new_file_meta, this->immutable_memtable_->NewIterator());
 
         // 更新SSTable编号

@@ -30,6 +30,8 @@ namespace koishidb
         // 处理批量写操作
         // 参数update: 包含多个写操作的批量对象
         virtual void Write(WriteBatch *update) = 0;
+
+        virtual ~DB() {} // 必须加上！
     };
 }; // namespace koishidb
 

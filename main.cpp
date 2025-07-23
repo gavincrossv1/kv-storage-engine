@@ -2,6 +2,8 @@
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <csignal>
+#include <atomic>
 
 #include "db.h"
 #include "db_impl.h"
@@ -45,10 +47,20 @@ using koishidb::ThreadPool;
 
 // 全局连接存储，使用并发哈希表管理所有客户端连接
 // 键为文件描述符，值为对应的连接对象
+
+std::atomic<bool> running(true);
+
+void signal_handler(int signum) 
+{
+    running = false;
+}
+
 concurrent_hashmap<int, std::shared_ptr<connection>> connection_storage;
 
 int main()
 {
+    signal(SIGINT, signal_handler); // 捕获Ctrl+C
+    signal(SIGTERM, signal_handler);
     // 使用unique_ptr实现RAII，自动释放数据库资源
     // 初始化数据库实现类对象
     std::unique_ptr<koishidb::DB> db = std::make_unique<koishidb::DBimpl>(); // 毫无疑问,DBimpl是DB的子类
@@ -86,7 +98,7 @@ int main()
     epoll_helper::create_event(epoll_fd, listen_fd, EPOLLIN);
 
     // 主事件循环，持续处理各种事件
-    while (true)
+    while (running)
     {
         // 等待事件发生，-1表示无限期阻塞
         // 返回值为发生的事件数量
@@ -212,6 +224,12 @@ int main()
                             //connection_storage.erase(conn_fd);
                             return flag;
                         }
+                        else
+                        {
+                            // 客户端关闭
+                            close(conn_fd);
+                            connection_storage.erase(conn_fd);
+                        }
                         return false; });
             }
             // 注意：为了非阻塞，我们不应该调用future的get方法
@@ -220,6 +238,7 @@ int main()
 
     // 关闭监听socket（实际运行中由于主循环是无限的，这里可能永远不会执行）
     close(listen_fd);
-
+    LOG_INFO("server shutdown");
+    LOG_INFO("main return, db即将析构");
     return 0;
 }
