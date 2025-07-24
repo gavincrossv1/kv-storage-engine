@@ -64,6 +64,24 @@
         "cerrno": "cpp",
         "climits": "cpp",
         "ios": "cpp",
-        "queue": "cpp"
+        "queue": "cpp",
+        "bitset": "cpp",
+        "cfenv": "cpp",
+        "charconv": "cpp",
+        "codecvt": "cpp",
+        "complex": "cpp",
+        "csetjmp": "cpp",
+        "csignal": "cpp",
+        "cuchar": "cpp",
+        "forward_list": "cpp",
+        "list": "cpp",
+        "unordered_set": "cpp",
+        "map": "cpp",
+        "regex": "cpp",
+        "set": "cpp",
+        "iomanip": "cpp",
+        "scoped_allocator": "cpp",
+        "typeindex": "cpp",
+        "valarray": "cpp"
     }
 }

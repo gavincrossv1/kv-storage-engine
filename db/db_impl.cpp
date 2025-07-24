@@ -41,16 +41,18 @@ namespace koishidb
           immutable_memtable_(nullptr),
           cmp_(new InternalKeyComparator())
     {
-        LOG_INFO("DBimpl call");
+        LOG_INFO("DBimpl构造函数启动");
         // 检查manifest文件是否存在
         if (access("./manifest", F_OK) == -1) // access检查文件是否存在或测试文件的访问权限
         {
+            LOG_INFO("manifest不存在");
             // 不存在manifest文件，初始化SSTable编号和最后序列号
             this->sstable_number_ = 1;
             this->last_sequence_ = 1;
         }
         else
         {
+            LOG_INFO("manifest存在");
             // 存在manifest文件，读取其中的元数据
             ReadManifest();
         }
@@ -146,10 +148,10 @@ namespace koishidb
     // 持久化manifest文件，保存当前数据库元数据
     void DBimpl::DumpManifest()
     {
-        LOG_INFO("[DumpManifest] called");
         // 打开manifest文件（只写、创建模式，权限0777）
         int fd = ::open("manifest", O_WRONLY | O_CREAT, 0777);
-        if (fd < 0) {
+        if (fd < 0)
+        {
             LOG_ERROR("[DumpManifest] open failed: errno=%d, %s", errno, strerror(errno));
             return;
         }
@@ -253,7 +255,7 @@ namespace koishidb
 
     // 读取键对应的值（先查内存表，再查磁盘SSTable）
     // 当前不支持事务和快照读
-    //在查磁盘SSTable中,为了优化查询,有两层保障,第1层是记录每个存储文件的最小键和最大键,如果要查的件不在这个范围内,就直接跳过,第2层则是使用布隆过滤器
+    // 在查磁盘SSTable中,为了优化查询,有两层保障,第1层是记录每个存储文件的最小键和最大键,如果要查的件不在这个范围内,就直接跳过,第2层则是使用布隆过滤器
     bool DBimpl::Get(const Slice &key, std::string *value)
     {
         // 获取共享锁（读锁）
@@ -374,15 +376,6 @@ namespace koishidb
         std::string new_sstable_name = "sstable_" + std::to_string(sstable_number_);
         FileMeta *new_file_meta = new FileMeta(); // 创建新文件元信息
         this->file_metas_.push_back(new_file_meta);
-
-        // 构建SSTable
-        int fd = ::open(new_sstable_name.c_str(), O_WRONLY | O_CREAT, 0777);
-        if (fd < 0) {
-            LOG_ERROR("[CompactMemtable] open sstable failed: %s, errno=%d, %s", new_sstable_name.c_str(), errno, strerror(errno));
-        } else {
-            LOG_INFO("[CompactMemtable] open sstable %s fd=%d", new_sstable_name.c_str(), fd);
-            ::close(fd); // 这里只是测试能否创建文件，实际BuildTable会重新创建
-        }
         Status s = BuildTable(new_sstable_name, new_file_meta, this->immutable_memtable_->NewIterator());
 
         // 更新SSTable编号

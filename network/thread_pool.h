@@ -123,7 +123,6 @@ namespace koishidb
     // 析构函数实现：停止所有工作线程
     inline ThreadPool::~ThreadPool()
     {
-        LOG_INFO("[ThreadPool] destructor called");
         {
             std::unique_lock<std::mutex> lock(queue_mutex);
             stop = true; // 设置停止标记

@@ -238,7 +238,6 @@ int main()
 
     // 关闭监听socket（实际运行中由于主循环是无限的，这里可能永远不会执行）
     close(listen_fd);
-    LOG_INFO("server shutdown");
     LOG_INFO("main return, db即将析构");
     return 0;
 }
