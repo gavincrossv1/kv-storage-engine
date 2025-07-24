@@ -139,7 +139,7 @@ namespace koishidb
         }
 
         // 设置SSTable编号（与文件元信息数量一致）
-        this->sstable_number_ = file_meta_count;
+        this->sstable_number_ = file_meta_count + 1;  // 关键修改！
         ::close(fd); // 关闭文件描述符
 
         return Status::OK();
@@ -148,8 +148,8 @@ namespace koishidb
     // 持久化manifest文件，保存当前数据库元数据
     void DBimpl::DumpManifest()
     {
-        // 打开manifest文件（只写、创建模式，权限0777）
-        int fd = ::open("manifest", O_WRONLY | O_CREAT, 0777);
+        // 打开manifest文件（只写、创建模式,覆盖元文件,而非追加，权限0777）
+        int fd = ::open("manifest", O_WRONLY | O_CREAT | O_TRUNC, 0777);
         if (fd < 0)
         {
             LOG_ERROR("[DumpManifest] open failed: errno=%d, %s", errno, strerror(errno));
@@ -294,13 +294,14 @@ namespace koishidb
         for (int i = 0; i < this->file_metas_.size(); i++)
         {
             auto file_meta = this->file_metas_[i];
-
+            LOG_INFO("%d",file_meta->number);
             // 检查键是否在当前SSTable的键范围内
-            if (this->cmp_->Compare(file_meta->smallest_key.ToSlice(), internal_key) == -1 &&
-                this->cmp_->Compare(file_meta->largest_key.ToSlice(), internal_key) == 1)
-            {
+            // if (this->cmp_->Compare(file_meta->smallest_key.ToSlice(), internal_key) <=0 &&
+            //     this->cmp_->Compare(file_meta->largest_key.ToSlice(), internal_key) >=0)
+            // {
                 // 打开SSTable文件
                 std::string file_name = "sstable_" + std::to_string(file_meta->number);
+                LOG_INFO("键在SSTable范围内");
                 RandomAccessFile random_access_file(file_name);
 
                 // 打开SSTable并查询
@@ -310,15 +311,17 @@ namespace koishidb
 
                 if (!result.has_value())
                 {
+                    LOG_INFO("键不在该文件内");
                     continue; // 未找到，继续查下一个SSTable
                 }
                 else
                 {
+                    LOG_INFO("键在该文件内");
                     *value = *result; // 找到值，赋值并返回
                     delete internal_key.data();
                     return true;
                 }
-            }
+            // }
         }
 
         delete internal_key.data(); // 释放内部键内存

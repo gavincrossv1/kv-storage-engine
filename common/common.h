@@ -30,7 +30,7 @@ namespace koishidb
     constexpr int kBlockSize = 4096;                // 数据块（Block）的大小（字节）
     constexpr int kWritableFileBuffer = 65536;      // 可写文件（WritableFile）的缓冲区大小（字节）
     constexpr int kBloomFilterPerKeySize = 10;      // 布隆过滤器中每个键分配的位数
-    constexpr int kFilterBaseLg = 11;               // 过滤器基数的对数（用于计算过滤器覆盖的键范围）
+    constexpr int kFilterBaseLg = 12;               // 过滤器基数的对数（用于计算过滤器覆盖的键范围）
     constexpr int kFilterBase = 1 << kFilterBaseLg; // 每个布隆过滤器覆盖的字节范围(2048)//?
     constexpr int kFixedFooterSize = 40;            // SSTable文件固定的 Footer 大小（字节）
     constexpr int kManifestReserved = 4196;         // 清单文件（Manifest）预留的空间大小（字节）

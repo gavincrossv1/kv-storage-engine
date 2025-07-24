@@ -139,23 +139,23 @@ namespace koishidb
     {
         Rep *r = rep_;
 
-        // 先通过布隆过滤器判断键是否可能存在（不存在则直接返回）//?
-        if (bloom_filter_.KeyMayMatch(key, r->filter_data) == false)
-        {
-            return {};
-        }
+        //先通过布隆过滤器判断键是否可能存在（不存在则直接返回）//?
+        // if (bloom_filter_.KeyMayMatch(key, r->filter_data) == false)
+        // {
+        //     return {};
+        // }
 
         // 创建迭代器并查找键
         Iterator *iter = NewIterator();
         iter->SeekToFirst();
         bool flag = iter->Seek(key);
 
-        // 检查是否找到有效数据
-        if (!iter->Valid() || flag == false)
-        {
-            delete iter;
-            return {};
-        }
+        //检查是否找到有效数据//?
+        // if (flag == false)
+        // {
+        //     delete iter;
+        //     return {};
+        // }
 
         // 存储结果并释放迭代器
         std::string value = iter->Value().ToString();
