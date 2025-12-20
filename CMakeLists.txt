@@ -23,3 +23,4 @@ link_libraries(common db disk memory network type util pthread)
 
 
 add_executable(server main.cpp)
+add_executable(db_bench db_bench.cpp)

@@ -9,7 +9,7 @@
 #include "slice.h"
 #include "encode.h"
 
-// 内部件组成:[ varint32(internal_key_len) ] [ InternalKey ] [ varint32(value_len) ] [ Value ](内部键长度加内部键加值长度加值)
+// 内部键组成:[ varint32(internal_key_len) ] [ InternalKey ] [ varint32(value_len) ] [ Value ](内部键长度加内部键加值长度加值)
 // varint32(internal_key_len)：变长编码的 32 位整数，表示 InternalKey 的长度。
 // InternalKey：包含用户键（UserKey）+ 序列号（SequenceNumber）+ 键类型（KeyType）。
 // varint32(value_len)：变长编码的 32 位整数，表示 Value 的长度。

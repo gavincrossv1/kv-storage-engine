@@ -154,7 +154,7 @@ int main()
                 auto connection = connection_storage.get(conn_fd);
 
                 // 将任务提交到线程池处理，实现异步处理
-                std::future<bool> result = thread_pool.enqueue([&]() -> bool
+                thread_pool.enqueue([conn_fd, connection, &db]() -> bool
                                                                {
                         // 读取并解析客户端请求
                         if (Parser::read(conn_fd, connection))
@@ -218,10 +218,6 @@ int main()
                                     break;
                                 }
                             }
-                            // 处理完成后关闭连接
-                            //close(conn_fd);
-                            // 从连接存储中移除该连接
-                            //connection_storage.erase(conn_fd);
                             return flag;
                         }
                         else

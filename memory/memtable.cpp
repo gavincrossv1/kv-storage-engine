@@ -49,10 +49,13 @@ namespace koishidb
             return Slice(memtable_key.data(), value_len); // 返回值
         }
 
-        // 移动到第一个元素（断言迭代器有效）
+        // 移动到第一个元素
+        // 注意：迭代器在构造时已经指向第一个元素，此方法主要用于重置
         void SeekToFirst() override
         {
-            assert(iter_.Valid());
+            // 迭代器在构造函数中已经指向第一个元素
+            // 这里不需要做任何操作，因为SkipList::Iterator在构造时就已经指向第一个节点
+            // 如果表为空，iter_.Valid() 会返回 false，调用方应该检查这一点
         }
 
     private:

@@ -210,9 +210,13 @@ namespace koishidb
         // 创建新节点（自动生成层级）
         auto new_node = new SkipList<K, Comparator>::Node(memtable_key);
         auto ptr = head_;
-        int cur_level = new_node->get_level() - 1; // 从新节点的最高层级开始处理
+        int cur_level = kSkipListNodeMaxLevel - 1; // 从最高层级开始处理
 
-        // 逐层插入新节点
+        // 记录每一层的前驱节点
+        SkipList<K, Comparator>::Node* update[kSkipListNodeMaxLevel];
+        for(int i=0;i<kSkipListNodeMaxLevel;i++) update[i] = nullptr;
+
+        // 逐层查找插入位置
         while (cur_level >= 0)
         {
             auto next_ptr = ptr->get_n_node(cur_level);
@@ -222,10 +226,16 @@ namespace koishidb
                 ptr = next_ptr;
                 continue;
             }
-            // 插入新节点（更新前趋节点和新节点的指针）
-            ptr->set_n_node(cur_level, new_node);
-            new_node->set_n_node(cur_level, next_ptr);
+            update[cur_level] = ptr;
             cur_level--; // 处理下一层级
+        }
+
+        // 插入新节点
+        int new_level = new_node->get_level();
+        for(int i=0;i<new_level;i++)
+        {
+            new_node->set_n_node(i, update[i]->get_n_node(i));
+            update[i]->set_n_node(i, new_node);
         }
     }
 

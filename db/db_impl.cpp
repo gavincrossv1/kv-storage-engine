@@ -39,7 +39,9 @@ namespace koishidb
     DBimpl::DBimpl()
         : memtable_(new Memtable()),
           immutable_memtable_(nullptr),
-          cmp_(new InternalKeyComparator())
+          cmp_(new InternalKeyComparator()),
+          background_compaction_schedule_(false),
+          shutting_down_(false)
     {
         LOG_INFO("DBimpl构造函数启动");
         // 检查manifest文件是否存在
@@ -69,8 +71,10 @@ namespace koishidb
         // 等待后台压缩任务完成
         while (this->background_compaction_schedule_ == true)
         {
-            std::unique_lock<std::mutex> lock(this->cv_lock_, std::adopt_lock);
+            std::unique_lock<std::mutex> lock(this->cv_lock_);
+            this->rwlock_.unlock();
             this->background_work_finish_signal_.wait(lock);
+            this->rwlock_.lock();
         }
         this->rwlock_.unlock();
 
@@ -199,14 +203,14 @@ namespace koishidb
         writers_.push_back(&w); // 将任务加入写队列
 
         // 当前任务不是队列头部时需等待（保证FIFO顺序）
-        if (!w.done && &w != writers_.front())
+        while (!w.done && &w != writers_.front())
         {
-            // 避免死锁，释放条件变量锁后等待
-            std::unique_lock<std::mutex> cv_lock(cv_lock_, std::adopt_lock);
+            // 避免死锁，释放读写锁后等待
+            std::unique_lock<std::mutex> cv_lock(cv_lock_);
+            lock.unlock();
             w.cv.wait(cv_lock);
-            cv_lock.release();
+            lock.lock();
         }
-        cv_lock_.unlock(); // 释放条件变量锁
 
         // 任务已完成，直接返回
         if (w.done)
@@ -273,17 +277,17 @@ namespace koishidb
         // 先查当前内存表
         if (mem->Get(memtable_key, value))
         {
-            delete memtable_key.data(); // 释放动态分配的键内存(CreateMemtableKey中new出来的)
+            delete[] memtable_key.data(); // 释放动态分配的键内存(CreateMemtableKey中new出来的)
             return true;
         }
         // 再查不可变内存表
         else if (immutable_memtable_ != nullptr && imm->Get(memtable_key, value))
         {
-            delete memtable_key.data();
+            delete[] memtable_key.data();
             return true;
         }
 
-        delete memtable_key.data(); // 释放内存表查询键
+        delete[] memtable_key.data(); // 释放内存表查询键
         // 在内存表中的查询结束,接下来开始查硬盘
 
         // 构建用于SSTable查询的内部键
@@ -318,13 +322,13 @@ namespace koishidb
                 {
                     LOG_INFO("键在该文件内");
                     *value = *result; // 找到值，赋值并返回
-                    delete internal_key.data();
+                    delete[] internal_key.data();
                     return true;
                 }
             // }
         }
 
-        delete internal_key.data(); // 释放内部键内存
+        delete[] internal_key.data(); // 释放内部键内存
         return false;               // 未找到
     }
 
@@ -379,7 +383,11 @@ namespace koishidb
         std::string new_sstable_name = "sstable_" + std::to_string(sstable_number_);
         FileMeta *new_file_meta = new FileMeta(); // 创建新文件元信息
         this->file_metas_.push_back(new_file_meta);
-        Status s = BuildTable(new_sstable_name, new_file_meta, this->immutable_memtable_->NewIterator());
+        
+        // 创建迭代器并构建SSTable
+        Iterator *iter = this->immutable_memtable_->NewIterator();
+        Status s = BuildTable(new_sstable_name, new_file_meta, iter);
+        delete iter; // 释放迭代器，防止内存泄漏
 
         // 更新SSTable编号
         new_file_meta->number = sstable_number_;
@@ -419,8 +427,12 @@ namespace koishidb
         // 获取独占锁
         std::unique_lock<std::shared_mutex> wlock(rwlock_);
         BackGroundCompaction();                      // 执行压缩
-        background_compaction_schedule_ = false;     // 标记压缩任务已完成
-        background_work_finish_signal_.notify_all(); // 通知等待的线程
+        
+        {
+            std::lock_guard<std::mutex> lock(cv_lock_);
+            background_compaction_schedule_ = false;     // 标记压缩任务已完成
+            background_work_finish_signal_.notify_all(); // 通知等待的线程
+        }
     }
 
     // 可能调度压缩任务（前置条件：持有锁）
@@ -434,6 +446,8 @@ namespace koishidb
         // 存在不可变内存表，调度压缩任务
         else if (immutable_memtable_ != nullptr)
         {
+            // 先标记压缩任务已调度，防止重复调度
+            background_compaction_schedule_ = true;
             // 创建后台压缩线程并分离（不阻塞主线程）
             std::thread compaction_task([this]()
                                         { this->BackGroundCall(); });
@@ -458,9 +472,10 @@ namespace koishidb
             // 存在不可变内存表，等待压缩完成
             else if (immutable_memtable_ != nullptr)
             {
-                std::unique_lock<std::mutex> lock(cv_lock_, std::adopt_lock);
+                std::unique_lock<std::mutex> lock(cv_lock_);
+                this->rwlock_.unlock();
                 background_work_finish_signal_.wait(lock); // 等待压缩完成通知
-                lock.release();
+                this->rwlock_.lock();
             }
             // 内存表已满，转为不可变内存表，创建新内存表并调度压缩
             else
