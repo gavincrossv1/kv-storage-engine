@@ -47,7 +47,7 @@ namespace koishidb // 这个也需要加上命名空间
             return false;
         }
 
-        LOG_INFO("[%d] received %d \n", conn_fd, n);
+        //LOG_INFO("[%d] received %d \n", conn_fd, n);
         // 将读取的数据追加到缓冲区
         read_storage.append(buf, n);
 

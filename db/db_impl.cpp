@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -65,10 +66,18 @@ namespace koishidb
     DBimpl::~DBimpl()
     {
         LOG_INFO("[DBimpl] destructor called");
-        // 获取独占锁，确保线程安全
-        this->rwlock_.lock();
+        
         // 标记数据库正在关闭
         this->shutting_down_.store(true, std::memory_order_release);
+        
+        // 唤醒所有可能在等待的线程
+        {
+            std::lock_guard<std::mutex> lock(this->cv_lock_);
+            this->background_work_finish_signal_.notify_all();
+        }
+        
+        // 获取独占锁，确保线程安全
+        this->rwlock_.lock();
         
         // 唤醒所有等待的写任务，让它们检查 shutting_down_ 标志并退出
         for (auto writer : writers_)
@@ -226,10 +235,15 @@ namespace koishidb
                 writers_.erase(std::remove(writers_.begin(), writers_.end(), &w), writers_.end());
                 return;
             }
-            // 避免死锁，释放读写锁后等待
-            std::unique_lock<std::mutex> cv_lock(cv_lock_);
+            // 释放写锁，让其他线程可以工作
             lock.unlock();
-            w.cv.wait(cv_lock);
+            
+            // 短暂等待，使用带超时的条件变量
+            {
+                std::unique_lock<std::mutex> cv_lk(cv_lock_);
+                w.cv.wait_for(cv_lk, std::chrono::milliseconds(10));
+            }
+            
             lock.lock();
         }
 
@@ -515,9 +529,14 @@ namespace koishidb
             // 存在不可变内存表，等待压缩完成
             else if (immutable_memtable_ != nullptr)
             {
-                std::unique_lock<std::mutex> lock(cv_lock_);
+                // 释放写锁，让后台压缩线程可以获取锁
                 this->rwlock_.unlock();
-                background_work_finish_signal_.wait(lock); // 等待压缩完成通知
+                {
+                    std::unique_lock<std::mutex> lock(cv_lock_);
+                    // 使用带超时的 wait，避免永久阻塞
+                    background_work_finish_signal_.wait_for(lock, std::chrono::milliseconds(10));
+                }
+                // 重新获取写锁
                 this->rwlock_.lock();
             }
             // 内存表已满，转为不可变内存表，创建新内存表并调度压缩
