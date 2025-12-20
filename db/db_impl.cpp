@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -68,6 +69,13 @@ namespace koishidb
         this->rwlock_.lock();
         // 标记数据库正在关闭
         this->shutting_down_.store(true, std::memory_order_release);
+        
+        // 唤醒所有等待的写任务，让它们检查 shutting_down_ 标志并退出
+        for (auto writer : writers_)
+        {
+            writer->cv.notify_one();
+        }
+        
         // 等待后台压缩任务完成
         while (this->background_compaction_schedule_ == true)
         {
@@ -196,6 +204,12 @@ namespace koishidb
     // 处理写批量操作，线程安全
     void DBimpl::Write(WriteBatch *update)
     {
+        // 检查数据库是否正在关闭
+        if (shutting_down_.load(std::memory_order_acquire))
+        {
+            return;
+        }
+        
         Writer w(update); // 创建写任务对象
 
         // 获取独占锁（写锁）
@@ -205,6 +219,13 @@ namespace koishidb
         // 当前任务不是队列头部时需等待（保证FIFO顺序）
         while (!w.done && &w != writers_.front())
         {
+            // 检查数据库是否正在关闭
+            if (shutting_down_.load(std::memory_order_acquire))
+            {
+                // 从队列中移除自己
+                writers_.erase(std::remove(writers_.begin(), writers_.end(), &w), writers_.end());
+                return;
+            }
             // 避免死锁，释放读写锁后等待
             std::unique_lock<std::mutex> cv_lock(cv_lock_);
             lock.unlock();
@@ -215,6 +236,23 @@ namespace koishidb
         // 任务已完成，直接返回
         if (w.done)
         {
+            return;
+        }
+        
+        // 再次检查是否正在关闭
+        if (shutting_down_.load(std::memory_order_acquire))
+        {
+            // 唤醒所有等待的写任务
+            while (!writers_.empty())
+            {
+                Writer *ready = writers_.front();
+                writers_.pop_front();
+                if (ready != &w)
+                {
+                    ready->done = true;
+                    ready->cv.notify_one();
+                }
+            }
             return;
         }
 
@@ -464,6 +502,11 @@ namespace koishidb
     {
         while (true)
         {
+            // 检查数据库是否正在关闭
+            if (shutting_down_.load(std::memory_order_acquire))
+            {
+                return;
+            }
             // 内存表未达最大容量，可直接写入
             if (memtable_->EstimatedSize() < kMaxMemtableSize)
             {

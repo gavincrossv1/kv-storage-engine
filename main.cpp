@@ -61,10 +61,13 @@ int main()
 {
     signal(SIGINT, signal_handler); // 捕获Ctrl+C
     signal(SIGTERM, signal_handler);
+    
     // 使用unique_ptr实现RAII，自动释放数据库资源
     // 初始化数据库实现类对象
+    // 注意：db 必须在 thread_pool 之前声明，这样 thread_pool 会先析构
+    // 确保所有使用数据库的任务都已完成后，数据库才会被释放
     std::unique_ptr<koishidb::DB> db = std::make_unique<koishidb::DBimpl>(); // 毫无疑问,DBimpl是DB的子类
-
+    
     // 创建线程池，用于并发处理客户端请求
     ThreadPool thread_pool(thread_pool_size);
 

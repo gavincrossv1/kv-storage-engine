@@ -140,11 +140,14 @@ private:
 
 int main(int argc, char* argv[]) {
     Config config;
-    if (argc > 1) config.mode = argv[1];
-    if (argc > 2) config.num_threads = stoi(argv[2]);
-    if (argc > 3) config.num_ops = stoi(argv[3]);
+    // 参数顺序: ./db_bench [threads] [ops] [mode]
+    // 例如: ./db_bench 4 1000 put
+    if (argc > 1) config.num_threads = stoi(argv[1]);
+    if (argc > 2) config.num_ops = stoi(argv[2]);
+    if (argc > 3) config.mode = argv[3];
 
     cout << "Starting benchmark on " << config.host << ":" << config.port << "..." << endl;
+    cout << "Mode: " << config.mode << ", Threads: " << config.num_threads << ", Ops: " << config.num_ops << endl;
     Benchmark bench(config);
     bench.Run();
 
