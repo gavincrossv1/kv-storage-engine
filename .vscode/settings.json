@@ -1,5 +1,13 @@
 {
     "C_Cpp.errorSquiggles": "disabled",
+    "C_Cpp.intelliSenseEngine": "disabled",
+    "clangd.path": "/usr/bin/clangd",
+    "clangd.arguments": [
+        "--compile-commands-dir=build",
+        "--background-index",
+        "--clang-tidy",
+        "--log=verbose"
+    ],
     "files.associations": {
         "string": "cpp",
         "shared_mutex": "cpp",

@@ -5,10 +5,14 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <string>
 #include <thread>
+
+
 
 #include "option.h"
 #include "builder.h"
@@ -26,10 +30,11 @@ namespace koishidb
             done = false;
         }
 
-        // 拷贝构造函数：默认实现
-        Writer(const Writer &that) = default;
+        // 禁用拷贝构造函数（condition_variable 不可拷贝）
+        Writer(const Writer &that) = delete;
 
         WriteBatch *batch;          // 指向写批量对象的指针
+
         bool done;                  // 标记当前写任务是否完成
         std::condition_variable cv; // 条件变量，用于等待任务完成通知
     };
@@ -133,38 +138,63 @@ namespace koishidb
             return Status::Corruption("manifest corruption");
         }
 
-        // 读取文件内容到缓冲区
-        char buf[kManifestReserved];
-        int ptr = 0;
-        int n;
-        while ((n = ::read(fd, buf + ptr, sizeof(buf))) > 0)
+        // manifest 会随 SSTable 数量增长，不能使用固定 4KB 栈缓冲区读取
+        std::string manifest_content;
+        char buf[4096];
+        while (true)
         {
-            ptr += n;
+            ssize_t n = ::read(fd, buf, sizeof(buf));
+            if (n > 0)
+            {
+                manifest_content.append(buf, static_cast<size_t>(n));
+                continue;
+            }
+            if (n == 0)
+            {
+                break;
+            }
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            ::close(fd);
+            return Status::IOError("read manifest error");
         }
+        ::close(fd); // 关闭文件描述符
 
         // 解析缓冲区数据
-        Slice slice(buf, ptr);
+        Slice slice(manifest_content);
         uint32_t file_meta_count;
-        GetVarint32(&slice, &file_meta_count); // 读取文件元信息数量
+        if (slice.empty())
+        {
+            return Status::Corruption("bad manifest file meta count");
+        }
+        GetVarint32(&slice, &file_meta_count);
 
         uint64_t last_sequence;
-        GetVarint64(&slice, &last_sequence); // 读取最后序列号
+
+        if (!GetVarint64(&slice, &last_sequence))
+        {
+            return Status::Corruption("bad manifest last sequence");
+        }
         this->last_sequence_ = last_sequence;
 
+        uint64_t max_file_number = 0;
         // 读取每个文件元信息并存储
-        for (int i = 0; i < file_meta_count; i++)
+        for (uint32_t i = 0; i < file_meta_count; i++)
         {
             FileMeta *file_meta;
             DecodeFileMeta(&file_meta, &slice);
+            max_file_number = std::max(max_file_number, file_meta->number);
             this->file_metas_.push_back(file_meta);
         }
 
-        // 设置SSTable编号（与文件元信息数量一致）
-        this->sstable_number_ = file_meta_count + 1;  // 关键修改！
-        ::close(fd); // 关闭文件描述符
+        // 设置下一个 SSTable 编号
+        this->sstable_number_ = max_file_number + 1;
 
         return Status::OK();
     }
+
 
     // 持久化manifest文件，保存当前数据库元数据
     void DBimpl::DumpManifest()
@@ -270,7 +300,8 @@ namespace koishidb
             return;
         }
 
-        MakeRoomForWrite(); // 确保有空间写入（必要时触发压缩）
+        MakeRoomForWrite(lock); // 确保有空间写入（必要时触发压缩）
+
         Writer *last_writer = &w;
 
         // 写批量合并优化:将队列中连续的多个WriteBatch合并为一个（减少锁冲突）
@@ -345,40 +376,53 @@ namespace koishidb
         // 构建用于SSTable查询的内部键
         Slice internal_key = CreateInternalKey(key, UINT64_MAX, kTypeSeek);
 
-        // 查磁盘上的SSTable
-        const Option *opt = new Option(new InternalKeyComparator());
-        for (int i = 0; i < this->file_metas_.size(); i++)
+        // 查磁盘上的SSTable。L0 文件可能范围重叠，必须从最新文件向旧文件查找。
+        const Option opt(new InternalKeyComparator());
+        for (auto iter = this->file_metas_.rbegin(); iter != this->file_metas_.rend(); ++iter)
         {
-            auto file_meta = this->file_metas_[i];
-            LOG_INFO("%d",file_meta->number);
-            // 检查键是否在当前SSTable的键范围内
-            // if (this->cmp_->Compare(file_meta->smallest_key.ToSlice(), internal_key) <=0 &&
-            //     this->cmp_->Compare(file_meta->largest_key.ToSlice(), internal_key) >=0)
-            // {
-                // 打开SSTable文件
-                std::string file_name = "sstable_" + std::to_string(file_meta->number);
-                LOG_INFO("键在SSTable范围内");
-                RandomAccessFile random_access_file(file_name);
+            auto file_meta = *iter;
+            if (file_meta == nullptr || file_meta->file_size < kFixedFooterSize ||
+                !file_meta->smallest_key.Valid() || !file_meta->largest_key.Valid())
+            {
+                continue;
+            }
 
-                // 打开SSTable并查询
-                auto sstable_opt = SSTable::Open(opt, &random_access_file, file_meta->file_size);
-                assert(sstable_opt.has_value()); // 断言打开成功
-                auto result = (*sstable_opt)->InternalGet(internal_key);
+            Slice smallest_user_key, largest_user_key;
+            SequenceNumber tmp_sequence;
+            ExtractUserKey(file_meta->smallest_key.ToSlice(), &smallest_user_key, &tmp_sequence);
+            ExtractUserKey(file_meta->largest_key.ToSlice(), &largest_user_key, &tmp_sequence);
+            if (smallest_user_key.Compare(key) > 0 || largest_user_key.Compare(key) < 0)
+            {
+                continue;
+            }
 
-                if (!result.has_value())
-                {
-                    LOG_INFO("键不在该文件内");
-                    continue; // 未找到，继续查下一个SSTable
-                }
-                else
-                {
-                    LOG_INFO("键在该文件内");
-                    *value = *result; // 找到值，赋值并返回
-                    delete[] internal_key.data();
-                    return true;
-                }
-            // }
+            // 打开SSTable文件
+            std::string file_name = "sstable_" + std::to_string(file_meta->number);
+            RandomAccessFile random_access_file(file_name);
+            if (!random_access_file.status().ok())
+            {
+                continue;
+            }
+
+            // 打开SSTable并查询
+            auto sstable_opt = SSTable::Open(&opt, &random_access_file, file_meta->file_size);
+            if (!sstable_opt.has_value())
+            {
+                continue;
+            }
+            auto result = (*sstable_opt)->InternalGet(internal_key);
+            delete *sstable_opt;
+
+            if (!result.has_value())
+            {
+                continue; // 未找到，继续查下一个SSTable
+            }
+
+            *value = *result; // 找到值，赋值并返回
+            delete[] internal_key.data();
+            return true;
         }
+
 
         delete[] internal_key.data(); // 释放内部键内存
         return false;               // 未找到
@@ -431,29 +475,41 @@ namespace koishidb
     Status DBimpl::CompactMemtable()
     {
         LOG_INFO("[CompactMemtable] called");
+        if (immutable_memtable_ == nullptr)
+        {
+            return Status::OK();
+        }
+
         // 生成新SSTable文件名
-        std::string new_sstable_name = "sstable_" + std::to_string(sstable_number_);
+        const uint64_t file_number = sstable_number_;
+        std::string new_sstable_name = "sstable_" + std::to_string(file_number);
         FileMeta *new_file_meta = new FileMeta(); // 创建新文件元信息
-        this->file_metas_.push_back(new_file_meta);
+        new_file_meta->number = file_number;
+        new_file_meta->file_size = 0;
         
         // 创建迭代器并构建SSTable
         Iterator *iter = this->immutable_memtable_->NewIterator();
         Status s = BuildTable(new_sstable_name, new_file_meta, iter);
         delete iter; // 释放迭代器，防止内存泄漏
 
-        // 更新SSTable编号
-        new_file_meta->number = sstable_number_;
-        sstable_number_++;
-
-        // 若失败，回滚编号
         if (!s.ok())
         {
-            sstable_number_--;
+            delete new_file_meta;
             return s;
         }
 
-        return s;
+        // 空 memtable 不会生成 SSTable，不能把未初始化的 FileMeta 放进元数据列表
+        if (new_file_meta->file_size == 0)
+        {
+            delete new_file_meta;
+            return Status::OK();
+        }
+
+        this->file_metas_.push_back(new_file_meta);
+        sstable_number_++;
+        return Status::OK();
     }
+
 
     // 后台压缩逻辑（前置条件：持有独占锁）
     void DBimpl::BackGroundCompaction()
@@ -512,7 +568,7 @@ namespace koishidb
     }
 
     // 确保有空间写入数据（必要时触发压缩，前置条件：持有独占锁）
-    void DBimpl::MakeRoomForWrite()
+    void DBimpl::MakeRoomForWrite(std::unique_lock<std::shared_mutex> &lock)
     {
         while (true)
         {
@@ -529,15 +585,19 @@ namespace koishidb
             // 存在不可变内存表，等待压缩完成
             else if (immutable_memtable_ != nullptr)
             {
-                // 释放写锁，让后台压缩线程可以获取锁
-                this->rwlock_.unlock();
+                if (!background_compaction_schedule_)
                 {
-                    std::unique_lock<std::mutex> lock(cv_lock_);
-                    // 使用带超时的 wait，避免永久阻塞
-                    background_work_finish_signal_.wait_for(lock, std::chrono::milliseconds(10));
+                    MaybeScheduleCompaction();
+                }
+
+                // 释放写锁，让后台压缩线程可以获取锁
+                lock.unlock();
+                {
+                    std::unique_lock<std::mutex> cv_lock(cv_lock_);
+                    background_work_finish_signal_.wait_for(cv_lock, std::chrono::milliseconds(10));
                 }
                 // 重新获取写锁
-                this->rwlock_.lock();
+                lock.lock();
             }
             // 内存表已满，转为不可变内存表，创建新内存表并调度压缩
             else
@@ -548,6 +608,7 @@ namespace koishidb
             }
         }
     }
+
 }; // namespace koishidb
 
 // 项目中最重要的部分,实现了数据库的核心功能,实现了不可变内存表到磁盘的压缩,但还未实现磁盘层的压缩(TODO)

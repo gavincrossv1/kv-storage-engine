@@ -148,18 +148,29 @@ namespace koishidb
         // 创建迭代器并查找键
         Iterator *iter = NewIterator();
         iter->SeekToFirst();
-        bool flag = iter->Seek(key);
+        iter->Seek(key);
 
-        //检查是否找到有效数据//?
-        // if (flag == false)
-        // {
-        //     delete iter;
-        //     return {};
-        // }
+        if (!iter->Valid())
+        {
+            delete iter;
+            return {};
+        }
+
+        Slice found_user_key, target_user_key;
+        SequenceNumber found_sequence, target_sequence;
+        ExtractUserKey(iter->Key(), &found_user_key, &found_sequence);
+        ExtractUserKey(key, &target_user_key, &target_sequence);
+        if (found_user_key.Compare(target_user_key) != 0)
+        {
+            delete iter;
+            return {};
+        }
 
         // 存储结果并释放迭代器
         std::string value = iter->Value().ToString();
+
         delete iter;
+
         return {value};
     }
 
@@ -175,10 +186,11 @@ namespace koishidb
     // 参数meta：文件元信息
     void PrintFileMeta(FileMeta &meta)
     {
-        LOG_INFO("file size %d", meta.file_size);
-        LOG_INFO("file number %d", meta.number);
+        LOG_INFO("file size %llu", static_cast<unsigned long long>(meta.file_size));
+        LOG_INFO("file number %llu", static_cast<unsigned long long>(meta.number));
 
         // 提取最小键和最大键的用户键及序列号
+
         Slice smallest_key = meta.smallest_key.ToSlice(), largest_key = meta.largest_key.ToSlice();
         Slice user_key1, user_key2;
         SequenceNumber s1, s2;

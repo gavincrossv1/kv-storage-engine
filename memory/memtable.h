@@ -68,10 +68,14 @@ namespace koishidb
         using Table = SkipList<Slice, MemtableKeyComparator>;
 
         // 构造函数：初始化跳表（使用内存表键比较器）
-        Memtable(): table_(new SkipList<Slice, MemtableKeyComparator>(new MemtableKeyComparator())) 
+        Memtable()
+            : table_(new SkipList<Slice, MemtableKeyComparator>(new MemtableKeyComparator())),
+              ref_(0),
+              imm_(false),
+              size_(0)
         {
-
         }
+
 
         // 禁用拷贝构造函数
         Memtable(const Memtable &that) = delete;

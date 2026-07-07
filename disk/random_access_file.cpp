@@ -16,7 +16,7 @@ namespace koishidb
         // 若打开失败，记录错误状态
         if (fd_ == -1)
         {
-            status_.Corruption("Open file error, check the filename");
+            status_ = Status::Corruption("Open file error, check the filename");
         }
     }
 
@@ -29,7 +29,10 @@ namespace koishidb
     Status RandomAccessFile::Read(uint64_t offset, size_t n, Slice *result,char *scratch)
     {
         // 确保文件已成功打开（文件描述符有效）
-        assert(fd_ != -1);
+        if (fd_ == -1)
+        {
+            return status_;
+        }
 
         // 使用pread进行随机读取（不会改变文件指针位置）
         ssize_t read_size = ::pread(fd_, scratch, n, static_cast<off_t>(offset));
@@ -49,11 +52,10 @@ namespace koishidb
     // 析构函数：关闭文件描述符
     RandomAccessFile::~RandomAccessFile()
     {
-        // 确保文件描述符有效
-        assert(fd_ != -1);
-
-        // 关闭文件
-        ::close(fd_);
+        if (fd_ != -1)
+        {
+            ::close(fd_);
+        }
     }
 }; // namespace koishidb
 

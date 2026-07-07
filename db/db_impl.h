@@ -2,12 +2,14 @@
 #ifndef KOISHIDB_SRC_INCLUDE_DB_IMPL_H
 #define KOISHIDB_SRC_INCLUDE_DB_IMPL_H
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
 #include <shared_mutex>
 
 #include "status.h"
+
 #include "db.h"
 #include "memtable.h"
 
@@ -43,7 +45,8 @@ namespace koishidb
         void Write(WriteBatch *update);
 
         // 当有新的写任务时，调用此函数确保有足够空间写入
-        void MakeRoomForWrite();
+        void MakeRoomForWrite(std::unique_lock<std::shared_mutex> &lock);
+
 
         // 可能调度后台压缩任务
         void MaybeScheduleCompaction();

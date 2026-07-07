@@ -174,10 +174,11 @@ namespace koishidb
 
     // 构造函数：初始化跳表（创建哨兵节点）
     template <typename K, typename Comparator>
-    SkipList<K, Comparator>::SkipList(Comparator *cmp) : cmp_(cmp)
+    SkipList<K, Comparator>::SkipList(Comparator *cmp) : cmp_(cmp), size_(0)
     {
         head_ = new SkipList<K, Comparator>::Node(kSkipListNodeMaxLevel); // 哨兵节点层级为最大层级
     }
+
 
     // 析构函数：释放所有节点和比较器
     template <typename K, typename Comparator>

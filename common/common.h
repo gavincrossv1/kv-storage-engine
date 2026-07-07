@@ -23,10 +23,11 @@ namespace koishidb
 
     // 常量定义
     constexpr int kSkipListNodeMaxLevel = 20;       // 跳表节点的最大层级
-    constexpr int kMemtableMaxSize = 4096;          // 内存表（mutable memtable）的最大大小
-    constexpr int kWriteBatchHeader = 12;           // 写批处理（WriteBatch）的头部大小（字节）
-    constexpr int kL0MaxFiles = 10;                 // L0层允许的最大文件数量（不过由于未实现磁盘层的压缩,这个暂未用到）
-    constexpr int kMaxMemtableSize = 4096;          // 内存表的最大大小（与kMemtableMaxSize一致，可能用于兼容）
+    constexpr int kMemtableMaxSize = 4 * 1024 * 1024; // 内存表（mutable memtable）的最大大小
+    constexpr int kWriteBatchHeader = 12;             // 写批处理（WriteBatch）的头部大小（字节）
+    constexpr int kL0MaxFiles = 10;                   // L0层允许的最大文件数量（不过由于未实现磁盘层的压缩,这个暂未用到）
+    constexpr int kMaxMemtableSize = kMemtableMaxSize; // 内存表的最大大小（与kMemtableMaxSize一致，可能用于兼容）
+
     constexpr int kBlockSize = 4096;                // 数据块（Block）的大小（字节）
     constexpr int kWritableFileBuffer = 65536;      // 可写文件（WritableFile）的缓冲区大小（字节）
     constexpr int kBloomFilterPerKeySize = 10;      // 布隆过滤器中每个键分配的位数
