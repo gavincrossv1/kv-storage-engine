@@ -5,6 +5,46 @@
 
 namespace koishidb
 {
+    namespace
+    {
+        bool ReadVarint32Safe(const char **p, const char *limit, uint32_t *value)
+        {
+            const char *q = *p;
+            uint32_t result = 0;
+            for (uint32_t shift = 0; shift <= 28 && q < limit; shift += 7)
+            {
+                uint32_t byte = static_cast<unsigned char>(*q++);
+                if (byte & 128)
+                {
+                    result |= ((byte & 127) << shift);
+                }
+                else
+                {
+                    result |= (byte << shift);
+                    *value = result;
+                    *p = q;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool SkipLengthPrefixedSliceSafe(const char **p, const char *limit)
+        {
+            uint32_t len = 0;
+            if (!ReadVarint32Safe(p, limit, &len))
+            {
+                return false;
+            }
+            if (static_cast<size_t>(limit - *p) < len)
+            {
+                return false;
+            }
+            *p += len;
+            return true;
+        }
+    } // namespace
+
     // WriteBatch格式：头部包含8字节序列号 + 4字节操作计数，后续为批量操作内容
     WriteBatch::WriteBatch() { Clear(); }
 
@@ -159,6 +199,68 @@ namespace koishidb
         // 追加源的操作内容（跳过头部）
         dst->rep_.append(src->rep_.data() + kWriteBatchHeader,
                          src->rep_.size() - kWriteBatchHeader);
+    }
+
+    Slice WriteBatchInternal::Contents(const WriteBatch *w)
+    {
+        return Slice(w->rep_.data(), w->rep_.size());
+    }
+
+    Status WriteBatchInternal::SetContents(WriteBatch *w, const Slice &contents)
+    {
+        Status s = ValidateContents(contents);
+        if (!s.ok())
+        {
+            return s;
+        }
+        w->rep_.assign(contents.data(), contents.size());
+        return Status::OK();
+    }
+
+    Status WriteBatchInternal::ValidateContents(const Slice &contents)
+    {
+        if (contents.size() < kWriteBatchHeader)
+        {
+            return Status::Corruption("bad write batch header");
+        }
+
+        const char *p = contents.data() + kWriteBatchHeader;
+        const char *limit = contents.data() + contents.size();
+        uint32_t count = DecodeFixed32(contents.data() + 8);
+
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            if (p >= limit)
+            {
+                return Status::Corruption("bad write batch count");
+            }
+
+            char key_type = *p++;
+            switch (static_cast<KeyType>(key_type))
+            {
+            case KeyType::kTypeValue:
+                if (!SkipLengthPrefixedSliceSafe(&p, limit) ||
+                    !SkipLengthPrefixedSliceSafe(&p, limit))
+                {
+                    return Status::Corruption("bad write batch value record");
+                }
+                break;
+            case KeyType::kTypeDeletion:
+                if (!SkipLengthPrefixedSliceSafe(&p, limit))
+                {
+                    return Status::Corruption("bad write batch deletion record");
+                }
+                break;
+            default:
+                return Status::Corruption("bad write batch record type");
+            }
+        }
+
+        if (p != limit)
+        {
+            return Status::Corruption("write batch has trailing bytes");
+        }
+        return Status::OK();
     }
 
 }; // namespace koishidb

@@ -17,6 +17,7 @@ namespace koishidb
 {
     // 前向声明文件元信息结构体
     struct FileMeta;
+    class WalWriter;
 
     // 数据库实现类，继承自DB接口，负责数据库存储部分的调度与管理
     class DBimpl : public DB
@@ -67,7 +68,19 @@ namespace koishidb
         Status ReadManifest();
 
         // 持久化manifest文件，保存当前数据库元数据
-        void DumpManifest();
+        Status DumpManifest();
+
+        // 启动时重放 WAL，恢复尚未落盘的写入
+        Status RecoverWal();
+
+        // 打开 WAL，后续写入追加日志
+        Status OpenWalForAppend();
+
+        // 将批量写入追加到 WAL
+        Status AppendToWal(WriteBatch *batch);
+
+        // 正常关闭并持久化 manifest 后清理 WAL
+        void ResetWalAfterCleanShutdown();
 
     private:
         std::deque<Writer *> writers_;                          // 写任务队列，存储待处理的写操作
@@ -81,6 +94,7 @@ namespace koishidb
         std::atomic<bool> shutting_down_;                       // 标记数据库是否正在关闭
         std::vector<FileMeta *> file_metas_;                    // 存储所有SSTable文件的元信息
         uint64_t sstable_number_;                               // 下一个可用的SSTable编号
+        WalWriter *wal_writer_;                                 // 当前 WAL 写入器
         Comparator *cmp_;                                       // 比较器（实际为内部键比较器）
     };
 }; // namespace koishidb

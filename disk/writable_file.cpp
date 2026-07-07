@@ -3,6 +3,8 @@
 
 #include <sys/errno.h>
 
+#include <cstring>
+
 #include "status.h"
 
 namespace koishidb
@@ -54,6 +56,27 @@ namespace koishidb
         Status status = WriteUnbuffered(buf_, pos_); // 写入缓冲区内容
         pos_ = 0;                                    // 重置缓冲区位置
         return status;
+    }
+
+    // 将缓冲区内容同步到磁盘
+    // 返回值：操作状态（成功返回OK，失败返回错误状态）
+    Status WritableFile::Sync()
+    {
+        Status status = Flush();
+        if (!status.ok())
+        {
+            return status;
+        }
+
+        while (::fsync(fd_) != 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            return PosixError(filename_, errno);
+        }
+        return Status::OK();
     }
 
     // 无缓冲将内存数据写入磁盘（直接调用系统write函数）
@@ -110,4 +133,4 @@ namespace koishidb
     }
 }; // namespace koishidb
 
-//提供向文件中写入数据的方式
+//提供向文件�

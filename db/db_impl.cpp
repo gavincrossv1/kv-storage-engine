@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -17,9 +18,14 @@
 #include "option.h"
 #include "builder.h"
 #include "random_access_file.h"
+#include "wal.h"
 
 namespace koishidb
 {
+    namespace
+    {
+        const char *kWalFileName = "wal.log";
+    }
 
     // DBimpl的内部结构体，用于管理写批量操作的上下文
     struct DBimpl::Writer
@@ -48,7 +54,8 @@ namespace koishidb
           immutable_memtable_(nullptr),
           cmp_(new InternalKeyComparator()),
           background_compaction_schedule_(false),
-          shutting_down_(false)
+          shutting_down_(false),
+          wal_writer_(nullptr)
     {
         LOG_INFO("DBimpl构造函数启动");
         // 检查manifest文件是否存在
@@ -63,7 +70,23 @@ namespace koishidb
         {
             LOG_INFO("manifest存在");
             // 存在manifest文件，读取其中的元数据
-            ReadManifest();
+            Status s = ReadManifest();
+            if (!s.ok())
+            {
+                LOG_ERROR("[DBimpl] ReadManifest failed: %s", s.ToString().c_str());
+            }
+        }
+
+        Status recover_status = RecoverWal();
+        if (!recover_status.ok())
+        {
+            LOG_ERROR("[DBimpl] RecoverWal failed: %s", recover_status.ToString().c_str());
+        }
+
+        Status open_wal_status = OpenWalForAppend();
+        if (!open_wal_status.ok())
+        {
+            LOG_ERROR("[DBimpl] OpenWalForAppend failed: %s", open_wal_status.ToString().c_str());
         }
     }
 
@@ -104,13 +127,28 @@ namespace koishidb
         if (memtable_ != nullptr)
         {
             immutable_memtable_ = memtable_;
-            CompactMemtable();
+            Status compact_status = CompactMemtable();
             immutable_memtable_ = nullptr;
             delete memtable_;
+            memtable_ = nullptr;
+            if (!compact_status.ok())
+            {
+                LOG_ERROR("[DBimpl] CompactMemtable on close failed: %s", compact_status.ToString().c_str());
+            }
         }
 
-        // 最后持久化manifest文件
-        DumpManifest();
+        // 最后持久化manifest文件；成功后清理 WAL，避免下次重复重放
+        Status manifest_status = DumpManifest();
+        if (manifest_status.ok())
+        {
+            ResetWalAfterCleanShutdown();
+        }
+        else
+        {
+            LOG_ERROR("[DBimpl] DumpManifest failed: %s", manifest_status.ToString().c_str());
+            delete wal_writer_;
+            wal_writer_ = nullptr;
+        }
 
         // 断言不可变内存表已释放
         assert(immutable_memtable_ == nullptr);
@@ -197,14 +235,14 @@ namespace koishidb
 
 
     // 持久化manifest文件，保存当前数据库元数据
-    void DBimpl::DumpManifest()
+    Status DBimpl::DumpManifest()
     {
         // 打开manifest文件（只写、创建模式,覆盖元文件,而非追加，权限0777）
         int fd = ::open("manifest", O_WRONLY | O_CREAT | O_TRUNC, 0777);
         if (fd < 0)
         {
             LOG_ERROR("[DumpManifest] open failed: errno=%d, %s", errno, strerror(errno));
-            return;
+            return Status::IOError("open manifest failed", std::strerror(errno));
         }
         LOG_INFO("[DumpManifest] open manifest fd=%d", fd);
         WritableFile file(fd, "manifest"); // 创建可写文件对象
@@ -213,14 +251,114 @@ namespace koishidb
         std::string rep;
         PutVarint32(this->file_metas_.size(), &rep);
         PutVarint64(&rep, this->last_sequence_);
-        file.Append(rep.data());
-        file.Flush(); // 刷新缓冲区到磁盘
+        Status s = file.Append(Slice(rep.data(), rep.size()));
+        if (!s.ok())
+        {
+            return s;
+        }
 
         // 写入每个文件元信息
         for (int i = 0; i < this->file_metas_.size(); i++)
         {
             PrintFileMeta(*this->file_metas_[i]);       // 打印元信息（调试用）
             EncodeFileMeta(this->file_metas_[i], file); // 编码并写入
+        }
+        return file.Sync();
+    }
+
+    // 启动时重放 WAL，恢复尚未写入 SSTable/manifest 的批量写入
+    Status DBimpl::RecoverWal()
+    {
+        WalReader reader(kWalFileName);
+        if (!reader.status().ok())
+        {
+            return reader.status();
+        }
+
+        std::string record;
+        Status read_status;
+        while (reader.ReadRecord(&record, &read_status))
+        {
+            WriteBatch batch;
+            Status batch_status = WriteBatchInternal::SetContents(&batch, Slice(record.data(), record.size()));
+            if (!batch_status.ok())
+            {
+                LOG_ERROR("[RecoverWal] bad write batch: %s", batch_status.ToString().c_str());
+                break;
+            }
+
+            SequenceNumber batch_begin = WriteBatchInternal::Sequence(&batch);
+            SequenceNumber batch_end = batch_begin + WriteBatchInternal::Count(&batch);
+            if (batch_end <= this->last_sequence_)
+            {
+                continue; // manifest 已覆盖该 batch，无需重放
+            }
+
+            batch.InsertAll(memtable_);
+            this->last_sequence_ = std::max(this->last_sequence_, batch_end);
+
+            if (memtable_->EstimatedSize() >= kMaxMemtableSize)
+            {
+                immutable_memtable_ = memtable_;
+                memtable_ = new Memtable();
+                Status compact_status = CompactMemtable();
+                delete immutable_memtable_;
+                immutable_memtable_ = nullptr;
+                if (!compact_status.ok())
+                {
+                    return compact_status;
+                }
+            }
+        }
+
+        if (!read_status.ok())
+        {
+            LOG_ERROR("[RecoverWal] stop at bad WAL tail: %s", read_status.ToString().c_str());
+        }
+
+        // 丢弃损坏或半条尾部，避免后续追加在坏尾部之后导致下次恢复中断。
+        Status truncate_status = TruncateWal(kWalFileName, reader.LastValidOffset());
+        if (!truncate_status.ok())
+        {
+            return truncate_status;
+        }
+        return Status::OK();
+    }
+
+    Status DBimpl::OpenWalForAppend()
+    {
+        delete wal_writer_;
+        wal_writer_ = new WalWriter(kWalFileName);
+        Status s = wal_writer_->status();
+        if (!s.ok())
+        {
+            delete wal_writer_;
+            wal_writer_ = nullptr;
+        }
+        return s;
+    }
+
+    Status DBimpl::AppendToWal(WriteBatch *batch)
+    {
+        if (wal_writer_ == nullptr)
+        {
+            Status s = OpenWalForAppend();
+            if (!s.ok())
+            {
+                return s;
+            }
+        }
+        return wal_writer_->AddRecord(WriteBatchInternal::Contents(batch));
+    }
+
+    void DBimpl::ResetWalAfterCleanShutdown()
+    {
+        delete wal_writer_;
+        wal_writer_ = nullptr;
+        Status s = RemoveWal(kWalFileName);
+        if (!s.ok())
+        {
+            LOG_ERROR("[ResetWalAfterCleanShutdown] remove WAL failed: %s", s.ToString().c_str());
         }
     }
 
@@ -307,13 +445,23 @@ namespace koishidb
         // 写批量合并优化:将队列中连续的多个WriteBatch合并为一个（减少锁冲突）
         WriteBatch *writer_batch = BuildWriteBatchGroup(&last_writer);
 
-        // 设置批处理的序列号，更新最后序列号
+        // 设置批处理的序列号。WAL 必须保存带确定 sequence 的 batch。
         // 每个操作分配唯一递增的sequence_number
+        const int batch_count = WriteBatchInternal::Count(writer_batch);
         WriteBatchInternal::SetSequence(writer_batch, last_sequence_);
-        last_sequence_ += WriteBatchInternal::Count(writer_batch);
 
-        // 将批处理中的所有put和delete操作插入内存表
-        writer_batch->InsertAll(memtable_);
+        // 先写 WAL 并同步，再写入 memtable，避免崩溃后出现无法恢复的内存可见写入。
+        Status wal_status = AppendToWal(writer_batch);
+        if (!wal_status.ok())
+        {
+            LOG_ERROR("[Write] append WAL failed: %s", wal_status.ToString().c_str());
+        }
+        else
+        {
+            last_sequence_ += batch_count;
+            // 将批处理中的所有put和delete操作插入内存表
+            writer_batch->InsertAll(memtable_);
+        }
 
         // 唤醒所有被合并的写任务（从队列头到last_writer）,因为这些写批量任务都已经被合并并完成了
         while (true)

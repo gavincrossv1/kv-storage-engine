@@ -39,9 +39,13 @@ namespace koishidb
         // 返回值：操作状态（成功返回OK，失败返回错误状态）
         Status Append(const Slice &content);
 
-        // 将缓冲区内容刷新到磁盘
+        // 将缓冲区内容刷新到操作系统
         // 返回值：操作状态（成功返回OK，失败返回错误状态）
         Status Flush();
+
+        // 将缓冲区内容同步到磁盘，WAL 用于提供崩溃恢复语义
+        // 返回值：操作状态（成功返回OK，失败返回错误状态）
+        Status Sync();
 
     private:
         // 无缓冲写入（直接调用系统write）

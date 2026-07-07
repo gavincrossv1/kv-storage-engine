@@ -7,6 +7,7 @@
 
 #include "common.h"
 #include "memtable.h"
+#include "status.h"
 #include "util.h"
 
 namespace koishidb
@@ -100,7 +101,16 @@ namespace koishidb
         // 获取批量操作的二进制数据大小
         // 参数w：批量操作对象
         // 返回值：数据大小（字节数）
-        static size_t Bytes(WriteBatch *w) { return w->rep_.size(); };
+        static size_t Bytes(const WriteBatch *w) { return w->rep_.size(); };
+
+        // 获取批量操作的原始二进制内容，用于 WAL 持久化
+        static Slice Contents(const WriteBatch *w);
+
+        // 从 WAL 恢复批量操作的原始二进制内容
+        static Status SetContents(WriteBatch *w, const Slice &contents);
+
+        // 校验原始二进制内容是否是完整、可解析的 WriteBatch
+        static Status ValidateContents(const Slice &contents);
     };
 
 #ifdef DEBUG

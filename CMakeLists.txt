@@ -31,6 +31,7 @@ add_executable(core_stress_test EXCLUDE_FROM_ALL
     disk/sstable.cpp
     disk/sstable_iterator.cpp
     disk/table_builder.cpp
+    disk/wal.cpp
     disk/writable_file.cpp
     memory/hash.cpp
     memory/memtable.cpp
@@ -43,6 +44,34 @@ add_executable(core_stress_test EXCLUDE_FROM_ALL
 )
 target_compile_features(core_stress_test PRIVATE cxx_std_17)
 target_link_libraries(core_stress_test PRIVATE pthread)
+
+add_executable(wal_recovery_test EXCLUDE_FROM_ALL
+    tests/wal_recovery_test.cpp
+    common/option.cpp
+    common/status.cpp
+    db/db_impl.cpp
+    disk/block_builder.cpp
+    disk/block_iterator.cpp
+    disk/builder.cpp
+    disk/filterblock_builder.cpp
+    disk/filterblock_reader.cpp
+    disk/random_access_file.cpp
+    disk/sstable.cpp
+    disk/sstable_iterator.cpp
+    disk/table_builder.cpp
+    disk/wal.cpp
+    disk/writable_file.cpp
+    memory/hash.cpp
+    memory/memtable.cpp
+    memory/write_batch.cpp
+    type/key.cpp
+    type/slice.cpp
+    util/bloom_filter.cpp
+    util/encode.cpp
+    util/util.cpp
+)
+target_compile_features(wal_recovery_test PRIVATE cxx_std_17)
+target_link_libraries(wal_recovery_test PRIVATE pthread)
 
 
 link_directories(${PROJECT_SOURCE_DIR}/lib)
