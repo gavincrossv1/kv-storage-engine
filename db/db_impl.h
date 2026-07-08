@@ -28,7 +28,7 @@ namespace koishidb
 
     public:
         // 构造函数：初始化数据库状态
-        DBimpl();
+        explicit DBimpl(bool enable_wal = true);
 
         // 析构函数：释放资源，确保数据安全
         ~DBimpl();
@@ -95,6 +95,7 @@ namespace koishidb
         std::vector<FileMeta *> file_metas_;                    // 存储所有SSTable文件的元信息
         uint64_t sstable_number_;                               // 下一个可用的SSTable编号
         WalWriter *wal_writer_;                                 // 当前 WAL 写入器
+        bool wal_enabled_;                                      // 是否启用 WAL
         Comparator *cmp_;                                       // 比较器（实际为内部键比较器）
     };
 }; // namespace koishidb

@@ -55,18 +55,41 @@ void signal_handler(int signum)
     running = false;
 }
 
+bool ParseWalSetting(int argc, char *argv[])
+{
+    bool enable_wal = true;
+    for (int i = 1; i < argc; ++i)
+    {
+        std::string arg = argv[i];
+        if (arg == "--disable-wal")
+        {
+            enable_wal = false;
+        }
+        else if (arg == "--enable-wal")
+        {
+            enable_wal = true;
+        }
+        else
+        {
+            LOG_WARN("Unknown argument: %s", arg.c_str());
+        }
+    }
+    return enable_wal;
+}
+
 concurrent_hashmap<int, std::shared_ptr<connection>> connection_storage;
 
-int main()
+int main(int argc, char *argv[])
 {
     signal(SIGINT, signal_handler); // 捕获Ctrl+C
     signal(SIGTERM, signal_handler);
+    const bool enable_wal = ParseWalSetting(argc, argv);
     
     // 使用unique_ptr实现RAII，自动释放数据库资源
     // 初始化数据库实现类对象
     // 注意：db 必须在 thread_pool 之前声明，这样 thread_pool 会先析构
     // 确保所有使用数据库的任务都已完成后，数据库才会被释放
-    std::unique_ptr<koishidb::DB> db = std::make_unique<koishidb::DBimpl>(); // 毫无疑问,DBimpl是DB的子类
+    std::unique_ptr<koishidb::DB> db = std::make_unique<koishidb::DBimpl>(enable_wal); // 毫无疑问,DBimpl是DB的子类
     
     // 创建线程池，用于并发处理客户端请求
     ThreadPool thread_pool(thread_pool_size);
@@ -90,7 +113,7 @@ int main()
 
     // 开始监听连接请求，等待队列长度为线程池大小
     listen(listen_fd, thread_pool_size);
-    LOG_INFO("server run in port 8096"); // 记录服务器启动日志
+    LOG_INFO("server run in port 8096, wal %s", enable_wal ? "enabled" : "disabled"); // 记录服务器启动日志
 
     // 配置epoll
     // 创建epoll实例，参数为期望处理的最大文件描述符数量

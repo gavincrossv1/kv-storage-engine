@@ -49,13 +49,14 @@ namespace koishidb
     // 首先存储文件元信息数量、最后序列号， followed by 各文件元信息的编码数据
 
     // 构造函数：初始化数据库状态，读取manifest文件
-    DBimpl::DBimpl()
+    DBimpl::DBimpl(bool enable_wal)
         : memtable_(new Memtable()),
           immutable_memtable_(nullptr),
           cmp_(new InternalKeyComparator()),
           background_compaction_schedule_(false),
           shutting_down_(false),
-          wal_writer_(nullptr)
+          wal_writer_(nullptr),
+          wal_enabled_(enable_wal)
     {
         LOG_INFO("DBimpl构造函数启动");
         // 检查manifest文件是否存在
@@ -77,16 +78,23 @@ namespace koishidb
             }
         }
 
-        Status recover_status = RecoverWal();
-        if (!recover_status.ok())
+        if (wal_enabled_)
         {
-            LOG_ERROR("[DBimpl] RecoverWal failed: %s", recover_status.ToString().c_str());
-        }
+            Status recover_status = RecoverWal();
+            if (!recover_status.ok())
+            {
+                LOG_ERROR("[DBimpl] RecoverWal failed: %s", recover_status.ToString().c_str());
+            }
 
-        Status open_wal_status = OpenWalForAppend();
-        if (!open_wal_status.ok())
+            Status open_wal_status = OpenWalForAppend();
+            if (!open_wal_status.ok())
+            {
+                LOG_ERROR("[DBimpl] OpenWalForAppend failed: %s", open_wal_status.ToString().c_str());
+            }
+        }
+        else
         {
-            LOG_ERROR("[DBimpl] OpenWalForAppend failed: %s", open_wal_status.ToString().c_str());
+            LOG_WARN("[DBimpl] WAL disabled, writes will not survive process crash before memtable flush");
         }
     }
 
@@ -141,7 +149,15 @@ namespace koishidb
         Status manifest_status = DumpManifest();
         if (manifest_status.ok())
         {
-            ResetWalAfterCleanShutdown();
+            if (wal_enabled_)
+            {
+                ResetWalAfterCleanShutdown();
+            }
+            else
+            {
+                delete wal_writer_;
+                wal_writer_ = nullptr;
+            }
         }
         else
         {
@@ -327,6 +343,10 @@ namespace koishidb
 
     Status DBimpl::OpenWalForAppend()
     {
+        if (!wal_enabled_)
+        {
+            return Status::OK();
+        }
         delete wal_writer_;
         wal_writer_ = new WalWriter(kWalFileName);
         Status s = wal_writer_->status();
@@ -340,6 +360,10 @@ namespace koishidb
 
     Status DBimpl::AppendToWal(WriteBatch *batch)
     {
+        if (!wal_enabled_)
+        {
+            return Status::OK();
+        }
         if (wal_writer_ == nullptr)
         {
             Status s = OpenWalForAppend();
