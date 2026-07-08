@@ -84,9 +84,112 @@ make
 
 ### 运行示例
 
+#### 1. 启动服务端
+
 ```bash
-./leveldb_simple
+# 默认启动（启用 WAL，保证崩溃后可恢复）
+./server
+
+# 关闭 WAL 启动（性能更高，但崩溃时会丢失最近未刷盘的写）
+./server --disable-wal
+
+# 显式启用 WAL（与默认行为一致）
+./server --enable-wal
 ```
+
+服务端默认监听 `127.0.0.1:8096`，启动成功后会打印类似日志：
+```
+2026-07-08 22:21:15 [main.cpp:93:main] INFO  - server run in port 8096, wal enabled
+```
+
+---
+
+#### 2. 使用 `nc` 手动测试
+
+打开另一个终端，用 `nc` 连接服务端后直接输入命令：
+
+```bash
+nc 127.0.0.1 8096
+```
+
+支持的命令格式（每行一条，回车发送）：
+
+```
+put <key> <value>    # 插入/更新键值对
+get <key>            # 查询指定键的值
+delete <key>         # 删除指定键
+```
+
+示例会话：
+
+```
+put name zhangsan
+1           ← 服务端返回 1 表示成功
+get name
+1           ← 1 表示成功
+zhangsan    ← 实际值
+delete name
+1           ← 1 表示成功
+get name
+0           ← 0 表示未找到
+```
+
+---
+
+#### 3. 性能测试（db_bench）
+
+项目内置了 `db_bench` 压测工具：
+
+```bash
+# 语法：./db_bench <线程数> <操作数> <模式>
+
+# 4 线程、1000 次 put
+./db_bench 4 1000 put
+
+# 4 线程、1000 次 get
+./db_bench 4 1000 get
+
+# 4 线程、1000 次混合读写（50% put + 50% get）
+./db_bench 4 1000 mixed
+```
+
+输出示例：
+
+```
+Starting benchmark on 127.0.0.1:8096...
+Mode: put, Threads: 4, Ops: 1000
+------------------------------------
+Benchmark Results (put):
+Threads:      4
+Total Ops:    1000
+Duration:     1.23 s
+Throughput:   811.69 ops/s
+Avg Latency:  4902.84 us
+------------------------------------
+```
+
+---
+
+#### 4. 对比 WAL 对性能的影响
+
+分别启动服务端并运行同样的压测，即可观察 WAL 带来的性能开销：
+
+```bash
+# 终端 1：启用 WAL 启动
+./server
+
+# 终端 2：跑压测
+./db_bench 4 1000 put
+# 记录结果后按 Ctrl+C 停止服务端
+
+# 终端 1：关闭 WAL 重新启动
+./server --disable-wal
+
+# 终端 2：跑同样的压测
+./db_bench 4 1000 put
+```
+
+对比两次结果的 `Throughput` 和 `Avg Latency` 即可看到 WAL 同步落盘（`fsync`）带来的性能损耗。
 
 ## 主要特性与亮点
 
