@@ -13,7 +13,11 @@
 
 namespace koishidb
 {
-    using BlockContent = Slice; // 数据块内容类型（Slice视图）
+    struct BlockContent
+    {
+        std::unique_ptr<char[]> data;
+        size_t size = 0;
+    };
 
     class Option;
     class RandomAccessFile;

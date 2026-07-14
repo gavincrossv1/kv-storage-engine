@@ -25,7 +25,6 @@ namespace koishidb
         ~Rep()
         {
             delete filter_block_reader; // 释放过滤器块读取器
-            delete[] filter_data;       // 释放过滤器数据
             delete index_block;         // 释放索引块
         }
 
@@ -33,7 +32,7 @@ namespace koishidb
         RandomAccessFile *file;                 // 随机访问文件对象
         Status status;                          // 状态信息
         FilterBlockReader *filter_block_reader; // 过滤器块读取器
-        const char *filter_data;                // 过滤器块数据
+        std::unique_ptr<char[]> filter_data;    // 过滤器块数据
         Block *index_block;                     // 索引块（存储数据块的句柄）
     };
 
@@ -80,7 +79,8 @@ namespace koishidb
         {
             return {};
         }
-        Block *block = new Block(index_block_content.value().get());
+        Block *block = new Block(std::move(index_block_content.value()->data),
+                     index_block_content.value()->size);
 
         // 读取过滤器块
         auto filter_block_content = ReadBlock(file, footer.filter_handle());
@@ -93,9 +93,10 @@ namespace koishidb
         // 初始化SSTable内部数据结构
         Rep *rep = new SSTable::Rep;
         rep->index_block = block;
-        rep->filter_data = filter_block_content.value()->data(); // 过滤器数据
+        rep->filter_data = std::move(filter_block_content.value()->data);
         rep->status = Status();
-        rep->filter_block_reader = new FilterBlockReader(Slice(rep->filter_data)); // 过滤器读取器
+        rep->filter_block_reader = new FilterBlockReader(
+            Slice(rep->filter_data.get(), filter_block_content.value()->size));
         rep->file = file;
         rep->option = opt;
 
@@ -111,24 +112,23 @@ namespace koishidb
     // 返回值：包含数据块内容的智能指针（optional，失败为空）
     std::optional<std::unique_ptr<BlockContent>> ReadBlock(RandomAccessFile *file, const BlockHandle &block_handle)
     {
-        std::unique_ptr<BlockContent> result(new BlockContent); // 存储数据块内容
-
-        // 分配缓冲区存储数据块
-        char *block_content = new char[block_handle.size()];
-        Status status = file->Read(block_handle.offset(), block_handle.size(), result.get(), block_content);
+        std::unique_ptr<BlockContent> result(new BlockContent);
+        result->data.reset(new char[block_handle.size()]);
+        Slice content;
+        Status status = file->Read(block_handle.offset(), block_handle.size(),
+                                   &content, result->data.get());
         if (!status.ok())
         {
-            delete[] block_content; // 释放缓冲区
             return {};
         }
 
         // 校验读取大小是否正确
-        if (result->size() != block_handle.size())
+        if (content.size() != block_handle.size())
         {
-            delete[] block_content;
             LOG_ERROR("read block error");
             return {};
         }
+        result->size = content.size();
 
         return {std::move(result)};
     }

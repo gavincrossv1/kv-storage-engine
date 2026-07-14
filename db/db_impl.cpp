@@ -18,6 +18,7 @@
 #include "option.h"
 #include "builder.h"
 #include "random_access_file.h"
+#include "table_cache.h"
 #include "wal.h"
 
 namespace koishidb
@@ -53,6 +54,7 @@ namespace koishidb
         : memtable_(new Memtable()),
           immutable_memtable_(nullptr),
           cmp_(new InternalKeyComparator()),
+          table_cache_(new TableCache(128)),//布隆过滤器的大小为128
           background_compaction_schedule_(false),
           shutting_down_(false),
           wal_writer_(nullptr),
@@ -549,7 +551,6 @@ namespace koishidb
         Slice internal_key = CreateInternalKey(key, UINT64_MAX, kTypeSeek);
 
         // 查磁盘上的SSTable。L0 文件可能范围重叠，必须从最新文件向旧文件查找。
-        const Option opt(new InternalKeyComparator());
         for (auto iter = this->file_metas_.rbegin(); iter != this->file_metas_.rend(); ++iter)
         {
             auto file_meta = *iter;
@@ -568,22 +569,15 @@ namespace koishidb
                 continue;
             }
 
-            // 打开SSTable文件
+            // 从缓存获取 SSTable；首次访问才读取 Footer、索引块和过滤器块。
             std::string file_name = "sstable_" + std::to_string(file_meta->number);
-            RandomAccessFile random_access_file(file_name);
-            if (!random_access_file.status().ok())
+            std::shared_ptr<SSTable> table = table_cache_->FindTable(
+                file_meta->number, file_name, file_meta->file_size);
+            if (!table)
             {
                 continue;
             }
-
-            // 打开SSTable并查询
-            auto sstable_opt = SSTable::Open(&opt, &random_access_file, file_meta->file_size);
-            if (!sstable_opt.has_value())
-            {
-                continue;
-            }
-            auto result = (*sstable_opt)->InternalGet(internal_key);
-            delete *sstable_opt;
+            auto result = table->InternalGet(internal_key);
 
             if (!result.has_value())
             {

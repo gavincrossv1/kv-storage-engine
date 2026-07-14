@@ -116,8 +116,9 @@ namespace koishidb
         }
 
         // 创建数据块并返回其迭代器
-        Block *block = new Block(block_content.value().get());
-        return new BlockIterator(block, opt_);
+        Block *block = new Block(std::move(block_content.value()->data),
+                     block_content.value()->size);
+        return new BlockIterator(block, opt_, true);
     }
 
     // 更新数据迭代器（根据当前索引项指向的数据块）
@@ -152,6 +153,7 @@ namespace koishidb
         {
             delete data_iter_; // 释放数据迭代器
         }
+        delete index_iter_;
     }
 
     // 构造函数：初始化SSTable迭代器

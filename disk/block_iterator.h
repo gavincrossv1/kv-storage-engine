@@ -19,10 +19,9 @@ namespace koishidb
     public:
         // 默认作为内部键（internal key）的迭代器
         // 构造函数：关联到指定的Block，并使用Option中的配置（如比较器）
-        BlockIterator(Block *block, const Option *opt);
+        BlockIterator(Block *block, const Option *opt, bool owns_block = false);
 
-        // 析构函数：使用默认实现
-        ~BlockIterator() = default;
+        ~BlockIterator();
 
         // 禁用拷贝构造函数
         BlockIterator(const BlockIterator &that) = delete;
@@ -61,6 +60,7 @@ namespace koishidb
         const Comparator *const cmp_; // 比较器（用于比较内部键，常量指针，指向常量对象）
         uint32_t offset_;             // 当前在data_中的偏移量（指向待解析数据的起始位置）
         Slice value_;                 // 当前键对应的值（以Slice形式存储，避免复制）
+        Block *owned_block_;          // 非空时由当前迭代器释放数据块
     };
 }; // namespace koishidb
 #endif

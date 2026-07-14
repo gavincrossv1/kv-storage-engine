@@ -5,6 +5,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <shared_mutex>
 
@@ -17,6 +18,7 @@ namespace koishidb
 {
     // 前向声明文件元信息结构体
     struct FileMeta;
+    class TableCache;
     class WalWriter;
 
     // 数据库实现类，继承自DB接口，负责数据库存储部分的调度与管理
@@ -93,6 +95,7 @@ namespace koishidb
         SequenceNumber last_sequence_;                          // 最后使用的序列号，用于保证操作顺序
         std::atomic<bool> shutting_down_;                       // 标记数据库是否正在关闭
         std::vector<FileMeta *> file_metas_;                    // 存储所有SSTable文件的元信息
+        std::unique_ptr<TableCache> table_cache_;                // 已打开 SSTable 的 LRU 缓存
         uint64_t sstable_number_;                               // 下一个可用的SSTable编号
         WalWriter *wal_writer_;                                 // 当前 WAL 写入器
         bool wal_enabled_;                                      // 是否启用 WAL

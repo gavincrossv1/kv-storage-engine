@@ -11,9 +11,16 @@ namespace koishidb
 {
     // 块迭代器构造函数
     // 初始化迭代器，关联到指定的块并使用配置中的比较器
-    BlockIterator::BlockIterator(Block *block, const Option *opt) : data_(block->data), size_(block->size), cmp_(opt->cmp)
+    BlockIterator::BlockIterator(Block *block, const Option *opt, bool owns_block)
+        : data_(block->data), size_(block->size), cmp_(opt->cmp),
+          owned_block_(owns_block ? block : nullptr)
     {
         SeekToFirst(); // 初始化为指向第一个元素
+    }
+
+    BlockIterator::~BlockIterator()
+    {
+        delete owned_block_;
     }
 
     // 将迭代器定位到块的第一个元素

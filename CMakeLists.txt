@@ -30,6 +30,7 @@ add_executable(core_stress_test EXCLUDE_FROM_ALL
     disk/random_access_file.cpp
     disk/sstable.cpp
     disk/sstable_iterator.cpp
+    disk/table_cache.cpp
     disk/table_builder.cpp
     disk/wal.cpp
     disk/writable_file.cpp
@@ -58,6 +59,7 @@ add_executable(wal_recovery_test EXCLUDE_FROM_ALL
     disk/random_access_file.cpp
     disk/sstable.cpp
     disk/sstable_iterator.cpp
+    disk/table_cache.cpp
     disk/table_builder.cpp
     disk/wal.cpp
     disk/writable_file.cpp
