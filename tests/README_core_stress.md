@@ -62,7 +62,7 @@ cmake --build . --target core_stress_test -j
 ./core_stress_test 8 100000 get --disable-wal
 ```
 
-当前预装数据保留在同一个 `DBimpl` 实例中，因此主要测量 MemTable 查询性能。WAL 开关只影响预装速度，不影响 `Get()` 本身。
+预装完成后测试会关闭数据库，将数据刷入 SSTable，然后重新打开数据库执行计时读取。因此该模式会覆盖 TableCache、Bloom Filter 和 Block Cache，而不是测量 MemTable 查询性能。WAL 开关只影响预装速度，不影响 `Get()` 本身。
 
 ### Mixed
 

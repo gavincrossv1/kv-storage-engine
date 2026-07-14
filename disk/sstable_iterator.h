@@ -2,6 +2,8 @@
 #ifndef KOISHIDB_SRC_INCLUDE_SSTABLE_ITERATOR_H
 #define KOISHIDB_SRC_INCLUDE_SSTABLE_ITERATOR_H
 
+#include <cstdint>
+
 #include "iterator.h"
 
 namespace koishidb
@@ -9,6 +11,7 @@ namespace koishidb
     class RandomAccessFile;
     class Block;
     class Option;
+    class BlockCache;
 
     // SSTable迭代器类，用于遍历SSTable中的数据项
     class SSTableIterator : public Iterator
@@ -19,7 +22,8 @@ namespace koishidb
         // 参数random_access_file：SSTable的随机访问文件
         // 参数opt：数据库选项（包含比较器等）
         SSTableIterator(Block *indexBlock, RandomAccessFile *random_access_file,
-                        const Option *opt);
+                        const Option *opt, uint64_t file_number = 0,
+                        BlockCache *block_cache = nullptr);
 
         // 禁用拷贝构造函数
         SSTableIterator(const SSTableIterator &that) = delete;
@@ -71,6 +75,8 @@ namespace koishidb
         Iterator *data_iter_;                  // 数据块的迭代器
         const Option *opt_;                    // 数据库选项（包含比较器）
         RandomAccessFile *random_access_file_; // SSTable的文件对象
+        uint64_t file_number_;                // SSTable 文件编号
+        BlockCache *block_cache_;             // 共享数据块缓存
         std::string data_block_handle_;        // 当前数据块的句柄（用于判断是否需要更新迭代器）
     };
 

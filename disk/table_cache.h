@@ -11,6 +11,7 @@
 
 namespace koishidb
 {
+    class BlockCache;
     class Option;
     class RandomAccessFile;
     class SSTable;
@@ -35,6 +36,7 @@ namespace koishidb
         using CacheList = std::list<std::shared_ptr<Entry>>;
 
         const size_t capacity_;
+        std::unique_ptr<BlockCache> block_cache_;
         CacheList lru_;
         std::unordered_map<uint64_t, CacheList::iterator> cache_;
         std::mutex mutex_;

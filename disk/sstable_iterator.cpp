@@ -1,6 +1,7 @@
 // 该文件实现了SSTableIterator类，用于遍历SSTable中的数据块，支持定位、移动等迭代操作
 #include "sstable_iterator.h"
 
+#include "block_cache.h"
 #include "option.h"
 #include "block.h"
 #include "block_iterator.h"
@@ -108,7 +109,18 @@ namespace koishidb
             return nullptr;
         }
 
-        // 读取数据块内容
+        if (block_cache_ != nullptr)
+        {
+            std::shared_ptr<Block> block = block_cache_->Get(
+                file_number_, random_access_file, block_handle);
+            if (!block)
+            {
+                return nullptr;
+            }
+            return new BlockIterator(std::move(block), opt_);
+        }
+
+        // 未配置缓存时保持原有直接读取行为。
         auto block_content = ReadBlock(random_access_file, block_handle);
         if (!block_content.has_value())
         {
@@ -160,7 +172,12 @@ namespace koishidb
     // 参数indexBlock：索引块（用于遍历数据块）
     // 参数random_access_file：SSTable的随机访问文件
     // 参数opt：数据库选项（包含比较器等）
-    SSTableIterator::SSTableIterator(Block *indexBlock,RandomAccessFile *random_access_file,const Option *opt): opt_(opt)
+    SSTableIterator::SSTableIterator(Block *indexBlock,
+                                     RandomAccessFile *random_access_file,
+                                     const Option *opt,
+                                     uint64_t file_number,
+                                     BlockCache *block_cache)
+        : opt_(opt), file_number_(file_number), block_cache_(block_cache)
     {
         index_iter_ = new BlockIterator(indexBlock, opt_); // 创建索引迭代器
         random_access_file_ = random_access_file;          // 关联文件对象

@@ -205,17 +205,36 @@ int main(int argc, char *argv[])
 		Clock::time_point shutdown_end;
 
 		{
-			std::unique_ptr<koishidb::DB> db = std::make_unique<koishidb::DBimpl>(config.enable_wal);
+			std::unique_ptr<koishidb::DB> db;
 
-			// Get and mixed modes read known existing keys; setup operations are not measured.
-			if (config.mode != "put")
+			// Get 模式必须关闭并重开数据库，确保计时读取来自 SSTable 而非 MemTable。
+			if (config.mode == "get")
 			{
-				std::cout << "Preparing " << config.operations << " records...\n";
-				for (uint64_t i = 0; i < config.operations; ++i)
+				std::cout << "Preparing " << config.operations << " records and flushing to SSTable...\n";
 				{
-					const std::string key = MakeKey("read", i);
-					const std::string value = MakeValue(config.value_size, i);
-					db->Put(key, value);
+					std::unique_ptr<koishidb::DB> prepare_db =
+						std::make_unique<koishidb::DBimpl>(config.enable_wal);
+					for (uint64_t i = 0; i < config.operations; ++i)
+					{
+						const std::string key = MakeKey("read", i);
+						const std::string value = MakeValue(config.value_size, i);
+						prepare_db->Put(key, value);
+					}
+				}
+				db = std::make_unique<koishidb::DBimpl>(config.enable_wal);
+			}
+			else
+			{
+				db = std::make_unique<koishidb::DBimpl>(config.enable_wal);
+				if (config.mode == "mixed")
+				{
+					std::cout << "Preparing " << config.operations << " records...\n";
+					for (uint64_t i = 0; i < config.operations; ++i)
+					{
+						const std::string key = MakeKey("read", i);
+						const std::string value = MakeValue(config.value_size, i);
+						db->Put(key, value);
+					}
 				}
 			}
 

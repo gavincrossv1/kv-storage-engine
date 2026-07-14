@@ -2,6 +2,8 @@
 #ifndef KOISHIDB_SRC_INCLUDE_DISK_BLOCK_ITERATOR_H
 #define KOISHIDB_SRC_INCLUDE_DISK_BLOCK_ITERATOR_H
 
+#include <memory>
+
 #include "common.h"
 #include "comparator.h"
 #include "iterator.h"
@@ -20,6 +22,7 @@ namespace koishidb
         // 默认作为内部键（internal key）的迭代器
         // 构造函数：关联到指定的Block，并使用Option中的配置（如比较器）
         BlockIterator(Block *block, const Option *opt, bool owns_block = false);
+        BlockIterator(std::shared_ptr<Block> block, const Option *opt);
 
         ~BlockIterator();
 
@@ -61,6 +64,7 @@ namespace koishidb
         uint32_t offset_;             // 当前在data_中的偏移量（指向待解析数据的起始位置）
         Slice value_;                 // 当前键对应的值（以Slice形式存储，避免复制）
         Block *owned_block_;          // 非空时由当前迭代器释放数据块
+        std::shared_ptr<Block> shared_block_; // 保持缓存块在迭代期间存活
     };
 }; // namespace koishidb
 #endif

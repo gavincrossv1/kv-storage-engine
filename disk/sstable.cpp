@@ -1,12 +1,15 @@
 // 该文件实现了SSTable类，负责SSTable的打开、数据块读取、内部查询及迭代器创建等核心功能
 #include "sstable.h"
 
+#include <algorithm>
 #include <fcntl.h>
 #include <unistd.h>
+#include <vector>
 
 #include "common.h"
 #include "option.h"
 #include "block.h"
+#include "block_cache.h"
 #include "block_iterator.h"
 #include "filterblock_reader.h"
 #include "format.h"
@@ -21,6 +24,12 @@ namespace koishidb
     // SSTable的内部数据结构，存储SSTable的元信息和块数据
     struct SSTable::Rep
     {
+        struct IndexEntry
+        {
+            std::string key;
+            BlockHandle handle;
+        };
+
         // 析构函数：释放资源
         ~Rep()
         {
@@ -30,10 +39,13 @@ namespace koishidb
 
         const Option *option;                   // 数据库选项（包含比较器等）
         RandomAccessFile *file;                 // 随机访问文件对象
+        uint64_t file_number;                   // SSTable 文件编号，用于数据块缓存键
+        BlockCache *block_cache;                // 共享数据块缓存，不负责生命周期
         Status status;                          // 状态信息
         FilterBlockReader *filter_block_reader; // 过滤器块读取器
         std::unique_ptr<char[]> filter_data;    // 过滤器块数据
         Block *index_block;                     // 索引块（存储数据块的句柄）
+        std::vector<IndexEntry> index_entries;  // 预解析索引，用于点查询二分定位
     };
 
     // SSTable析构函数：释放内部数据结构
@@ -47,7 +59,11 @@ namespace koishidb
     // 参数file：随机访问文件对象
     // 参数file_size：文件大小
     // 返回值：包含SSTable实例的optional（失败返回空）
-    std::optional<SSTable *> SSTable::Open(const Option *opt, RandomAccessFile *file, size_t file_size)
+    std::optional<SSTable *> SSTable::Open(const Option *opt,
+                                            RandomAccessFile *file,
+                                            size_t file_size,
+                                            uint64_t file_number,
+                                            BlockCache *block_cache)
     {
         // SSTable文件至少包含Footer（固定大小）
         if (file_size < kFixedFooterSize)
@@ -82,6 +98,24 @@ namespace koishidb
         Block *block = new Block(std::move(index_block_content.value()->data),
                      index_block_content.value()->size);
 
+        std::vector<Rep::IndexEntry> index_entries;
+        BlockIterator index_iter(block, opt);
+        index_iter.SeekToFirst();
+        index_iter.Next();
+        while (index_iter.Valid())
+        {
+            Slice encoded_handle = index_iter.Value();
+            BlockHandle handle;
+            Status decode_status = handle.DecodeFrom(&encoded_handle);
+            if (!decode_status.ok())
+            {
+                delete block;
+                return {};
+            }
+            index_entries.push_back({index_iter.Key().ToString(), handle});
+            index_iter.Next();
+        }
+
         // 读取过滤器块
         auto filter_block_content = ReadBlock(file, footer.filter_handle());
         if (!filter_block_content.has_value())
@@ -93,12 +127,15 @@ namespace koishidb
         // 初始化SSTable内部数据结构
         Rep *rep = new SSTable::Rep;
         rep->index_block = block;
+        rep->index_entries = std::move(index_entries);
         rep->filter_data = std::move(filter_block_content.value()->data);
         rep->status = Status();
         rep->filter_block_reader = new FilterBlockReader(
             Slice(rep->filter_data.get(), filter_block_content.value()->size));
         rep->file = file;
         rep->option = opt;
+        rep->file_number = file_number;
+        rep->block_cache = block_cache;
 
         // 创建SSTable实例
         SSTable *table = new SSTable(rep);
@@ -142,22 +179,17 @@ namespace koishidb
 
         // 先通过索引定位目标数据块，再检查该块对应的 Bloom Filter。
         // 返回 false 时可以直接跳过数据块读取，避免一次无效的磁盘 IO。
-        Iterator *index_iter = new BlockIterator(r->index_block, r->option);
-        index_iter->Seek(key);
-        if (!index_iter->Valid())
-        {
-            delete index_iter;
-            return {};
-        }
-
-        Slice encoded_handle = index_iter->Value();
-        BlockHandle block_handle;
-        Status decode_status = block_handle.DecodeFrom(&encoded_handle);
-        delete index_iter;
-        if (!decode_status.ok())
+        auto index_iter = std::lower_bound(
+            r->index_entries.begin(), r->index_entries.end(), key,
+            [r](const Rep::IndexEntry &entry, const Slice &target)
+            {
+                return r->option->cmp->Compare(Slice(entry.key), target) < 0;
+            });
+        if (index_iter == r->index_entries.end())
         {
             return {};
         }
+        const BlockHandle &block_handle = index_iter->handle;
 
         Slice user_key;
         SequenceNumber sequence;
@@ -167,8 +199,29 @@ namespace koishidb
             return {};
         }
 
-        // 创建迭代器并查找键
-        Iterator *iter = NewIterator();
+        std::shared_ptr<Block> cached_block;
+        if (r->block_cache != nullptr)
+        {
+            cached_block = r->block_cache->Get(r->file_number, r->file, block_handle);
+        }
+        else
+        {
+            auto block_content = ReadBlock(r->file, block_handle);
+            if (!block_content.has_value())
+            {
+                return {};
+            }
+            cached_block = std::make_shared<Block>(
+                std::move(block_content.value()->data), block_content.value()->size);
+        }
+
+        if (!cached_block)
+        {
+            return {};
+        }
+
+        // 复用已经定位出的 BlockHandle，避免 SSTableIterator 再次扫描索引块。
+        Iterator *iter = new BlockIterator(std::move(cached_block), r->option);
         iter->Seek(key);
 
         if (!iter->Valid())
@@ -199,7 +252,8 @@ namespace koishidb
     // 返回值：迭代器指针（需手动释放）
     Iterator *SSTable::NewIterator() const
     {
-        return new SSTableIterator(rep_->index_block, rep_->file, rep_->option);
+        return new SSTableIterator(rep_->index_block, rep_->file, rep_->option,
+                                   rep_->file_number, rep_->block_cache);
     }
 
 

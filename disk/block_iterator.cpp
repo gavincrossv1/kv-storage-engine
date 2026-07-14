@@ -18,6 +18,13 @@ namespace koishidb
         SeekToFirst(); // 初始化为指向第一个元素
     }
 
+    BlockIterator::BlockIterator(std::shared_ptr<Block> block, const Option *opt)
+        : data_(block->data), size_(block->size), cmp_(opt->cmp),
+          owned_block_(nullptr), shared_block_(std::move(block))
+    {
+        SeekToFirst();
+    }
+
     BlockIterator::~BlockIterator()
     {
         delete owned_block_;

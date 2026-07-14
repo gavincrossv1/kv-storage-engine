@@ -1,5 +1,6 @@
 #include "table_cache.h"
 
+#include "block_cache.h"
 #include "key.h"
 #include "option.h"
 #include "random_access_file.h"
@@ -15,7 +16,8 @@ namespace koishidb
         std::unique_ptr<SSTable> table;
     };
 
-    TableCache::TableCache(size_t capacity) : capacity_(capacity) {}
+    TableCache::TableCache(size_t capacity)
+        : capacity_(capacity), block_cache_(new BlockCache(64 * 1024 * 1024)) {}
 
     TableCache::~TableCache() = default;
 
@@ -39,7 +41,8 @@ namespace koishidb
         }
 
         std::unique_ptr<Option> option(new Option(new InternalKeyComparator()));
-        auto table_result = SSTable::Open(option.get(), file.get(), file_size);
+        auto table_result = SSTable::Open(option.get(), file.get(), file_size,
+                          file_number, block_cache_.get());
         if (!table_result.has_value())
         {
             return {};
@@ -73,11 +76,11 @@ namespace koishidb
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto cached = cache_.find(file_number);
-        if (cached == cache_.end())
+        if (cached != cache_.end())
         {
-            return;
+            lru_.erase(cached->second);
+            cache_.erase(cached);
         }
-        lru_.erase(cached->second);
-        cache_.erase(cached);
+        block_cache_->EvictFile(file_number);
     }
 } // namespace koishidb

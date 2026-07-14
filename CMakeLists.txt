@@ -22,6 +22,7 @@ add_executable(core_stress_test EXCLUDE_FROM_ALL
     common/option.cpp
     common/status.cpp
     db/db_impl.cpp
+    disk/block_cache.cpp
     disk/block_builder.cpp
     disk/block_iterator.cpp
     disk/builder.cpp
@@ -51,6 +52,7 @@ add_executable(wal_recovery_test EXCLUDE_FROM_ALL
     common/option.cpp
     common/status.cpp
     db/db_impl.cpp
+    disk/block_cache.cpp
     disk/block_builder.cpp
     disk/block_iterator.cpp
     disk/builder.cpp

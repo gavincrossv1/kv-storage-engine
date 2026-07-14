@@ -20,6 +20,7 @@ namespace koishidb
     };
 
     class Option;
+    class BlockCache;
     class RandomAccessFile;
     class Status;
     class BlockHandle;
@@ -36,7 +37,11 @@ namespace koishidb
         // 返回值：包含SSTable实例的optional（失败返回空）
         // 成功时：返回一个包含 SSTable* 的 optional。
         // 失败时：返回一个空的 optional（类似 std::nullopt）。
-        static std::optional<SSTable *> Open(const Option *opt, RandomAccessFile *file, size_t file_size);
+        static std::optional<SSTable *> Open(const Option *opt,
+                             RandomAccessFile *file,
+                             size_t file_size,
+                             uint64_t file_number = 0,
+                             BlockCache *block_cache = nullptr);
 
         // 禁用拷贝构造函数
         SSTable(const SSTable &that) = delete;
