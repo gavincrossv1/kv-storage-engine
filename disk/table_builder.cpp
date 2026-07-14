@@ -79,8 +79,11 @@ namespace koishidb
             r->pending_index_block = false;
         }
 
-        // 将键添加到过滤器（用于快速查询）
-        r->filter_block.AddKey(key);
+        // Bloom Filter 只保存用户键，避免查询键与不同序列号的内部键不一致。
+        Slice user_key;
+        SequenceNumber sequence;
+        ExtractUserKey(key, &user_key, &sequence);
+        r->filter_block.AddKey(user_key);
 
         // 将键值对添加到数据块
         r->data_block.Add(key, value);

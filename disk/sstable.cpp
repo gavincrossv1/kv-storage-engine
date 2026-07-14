@@ -7,6 +7,7 @@
 #include "common.h"
 #include "option.h"
 #include "block.h"
+#include "block_iterator.h"
 #include "filterblock_reader.h"
 #include "format.h"
 #include "random_access_file.h"
@@ -139,15 +140,35 @@ namespace koishidb
     {
         Rep *r = rep_;
 
-        //先通过布隆过滤器判断键是否可能存在（不存在则直接返回）//?
-        // if (bloom_filter_.KeyMayMatch(key, r->filter_data) == false)
-        // {
-        //     return {};
-        // }
+        // 先通过索引定位目标数据块，再检查该块对应的 Bloom Filter。
+        // 返回 false 时可以直接跳过数据块读取，避免一次无效的磁盘 IO。
+        Iterator *index_iter = new BlockIterator(r->index_block, r->option);
+        index_iter->Seek(key);
+        if (!index_iter->Valid())
+        {
+            delete index_iter;
+            return {};
+        }
+
+        Slice encoded_handle = index_iter->Value();
+        BlockHandle block_handle;
+        Status decode_status = block_handle.DecodeFrom(&encoded_handle);
+        delete index_iter;
+        if (!decode_status.ok())
+        {
+            return {};
+        }
+
+        Slice user_key;
+        SequenceNumber sequence;
+        ExtractUserKey(key, &user_key, &sequence);
+        if (!r->filter_block_reader->KeyMayMatch(block_handle.offset(), user_key))
+        {
+            return {};
+        }
 
         // 创建迭代器并查找键
         Iterator *iter = NewIterator();
-        iter->SeekToFirst();
         iter->Seek(key);
 
         if (!iter->Valid())
